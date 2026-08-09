@@ -13,7 +13,7 @@ from core.app.apps.workflow_app_runner import WorkflowBasedAppRunner
 from core.app.entities.app_invoke_entities import InvokeFrom, WorkflowAppGenerateEntity
 from core.credit_usage import CreditUsageAppType
 from core.workflow.system_variables import default_system_variables
-from graphon.runtime import GraphRuntimeState, VariablePool
+from graphon.runtime import RuntimeState, VariablePool
 from models.model import AppMode
 from models.workflow import Workflow, WorkflowKind
 
@@ -25,7 +25,11 @@ def _make_graph_state():
         environment_variables=[],
         conversation_variables=[],
     )
-    return MagicMock(), variable_pool, GraphRuntimeState(variable_pool=variable_pool, start_at=0.0)
+    return (
+        MagicMock(),
+        variable_pool,
+        RuntimeState(workflow_id="test-workflow", variable_pool=variable_pool, start_at=0.0),
+    )
 
 
 @pytest.mark.parametrize(
