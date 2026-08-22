@@ -220,6 +220,7 @@ class WorkflowBasedAppRunner:
         root_node_id: str | None = None,
         app_type: CreditUsageAppType | None = None,
         trace_session_id: str | None = None,
+        call_depth: int = 0,
     ) -> Graph:
         """
         Init graph
@@ -242,7 +243,7 @@ class WorkflowBasedAppRunner:
             workflow_id=workflow_id,
             graph_config=graph_config,
             run_context=run_context,
-            call_depth=0,
+            call_depth=call_depth,
         )
 
         # Use the provided graph_runtime_state for consistent state management
