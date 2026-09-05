@@ -942,6 +942,7 @@ class WorkflowNodeExecutionTriggeredFrom(StrEnum):
 
     SINGLE_STEP = "single-step"
     WORKFLOW_RUN = "workflow-run"
+    WORKFLOW_TOOL = "workflow-tool"
     RAG_PIPELINE_RUN = "rag-pipeline-run"
 
 

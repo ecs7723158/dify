@@ -154,7 +154,51 @@ def test_single_node_run_validates_target_node_config() -> None:
             node_id="loop-node",
             user_inputs={},
             graph_runtime_state=graph_runtime_state,
-            node_type_filter_key="loop_id",
+            node_type_label="loop",
+            user_id="00000000-0000-0000-0000-000000000001",
+        )
+
+
+def test_single_node_run_rejects_invalid_loop_count() -> None:
+    runner = WorkflowBasedAppRunner(
+        queue_manager=MagicMock(spec=AppQueueManager),
+        app_id="app",
+    )
+
+    workflow = Workflow(
+        id="workflow",
+        tenant_id="tenant",
+        graph=json.dumps(
+            {
+                "nodes": [
+                    {
+                        "id": "loop-node",
+                        "data": {
+                            "type": "loop",
+                            "title": "Loop",
+                            "loop_count": 0,
+                            "start_node_id": "loop-start",
+                            "break_conditions": [],
+                            "logical_operator": "and",
+                        },
+                    },
+                    {
+                        "id": "loop-start",
+                        "data": {"type": "loop-start", "title": "Loop start", "container_id": "loop-node"},
+                    },
+                ],
+                "edges": [],
+            }
+        ),
+    )
+
+    _, _, graph_runtime_state = _make_graph_state()
+    with pytest.raises(ValidationError, match="loop_count"):
+        runner._get_graph_and_variable_pool_for_single_node_run(
+            workflow=workflow,
+            node_id="loop-node",
+            user_inputs={},
+            graph_runtime_state=graph_runtime_state,
             node_type_label="loop",
             user_id="00000000-0000-0000-0000-000000000001",
         )
