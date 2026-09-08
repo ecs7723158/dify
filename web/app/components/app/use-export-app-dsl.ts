@@ -9,7 +9,7 @@ import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from '@/app/notifications'
 import { consoleClient } from '@/service/console'
-import { downloadBlob } from '@/utils/download'
+import { downloadAppDSLFile } from './dsl-file'
 
 type ExportAppDslInput = {
   appId: string
@@ -60,6 +60,7 @@ export async function exportAppDslFile({
       params: { app_id: appId },
       query: {
         include_secret: includeSecret,
+        ...(!format && !versionId && { include_workflow_tools: true }),
         ...(workflowId ? { workflow_id: workflowId } : {}),
         ...(versionId ? { version_id: versionId } : {}),
         ...(format && { format }),
@@ -68,20 +69,8 @@ export async function exportAppDslFile({
     { context: { silent: true } },
   )
 
-  if (response instanceof Blob) {
-    const name = response instanceof File ? response.name : undefined
-    downloadBlob({
-      data: response,
-      fileName: name && name !== 'blob' ? name : `${appName}.ifpkg`,
-    })
-    return 'ifpkg' as const
-  }
-
-  downloadBlob({
-    data: new Blob([response.data], { type: 'application/yaml' }),
-    fileName: `${appName}.yml`,
-  })
-  return 'yaml' as const
+  downloadAppDSLFile(response, appName)
+  return response instanceof Blob ? 'ifpkg' : 'yaml'
 }
 
 async function downloadAppDsl(input: ExportAppDslInput, messages: ExportAppDslMessages) {

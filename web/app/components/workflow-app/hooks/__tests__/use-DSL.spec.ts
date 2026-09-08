@@ -105,7 +105,7 @@ describe('useDSLByCanEdit', () => {
     expect(mockExportAppConfig).toHaveBeenCalledWith(
       {
         params: { app_id: 'app-1' },
-        query: { include_secret: true, workflow_id: 'revision-1' },
+        query: { include_secret: true, include_workflow_tools: true, workflow_id: 'revision-1' },
       },
       { context: { silent: true } },
     )
@@ -124,7 +124,7 @@ describe('useDSLByCanEdit', () => {
     expect(mockExportAppConfig).toHaveBeenCalledWith(
       {
         params: { app_id: 'app-1' },
-        query: { include_secret: false, workflow_id: undefined },
+        query: { include_secret: false, include_workflow_tools: true },
       },
       { context: { silent: true } },
     )
@@ -175,7 +175,7 @@ workflow:
     expect(mockExportAppConfig).toHaveBeenCalledWith(
       {
         params: { app_id: 'app-1' },
-        query: { include_secret: true, workflow_id: 'workflow-1' },
+        query: { include_secret: true, include_workflow_tools: true, workflow_id: 'workflow-1' },
       },
       { context: { silent: true } },
     )

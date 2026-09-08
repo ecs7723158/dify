@@ -9,11 +9,12 @@ import { memo, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import DSLImportWarningDescription from '@/app/components/app/create-from-dsl-modal/dsl-import-warning-description'
 import { Uploader } from '@/app/components/app/create-from-dsl-modal/uploader'
+import { readAppDSLFile } from '@/app/components/app/dsl-file'
 import { useStore as useAppStore } from '@/app/components/app/store'
 import { usePluginDependencies } from '@/app/components/workflow/plugin-dependency/hooks'
 import { toast } from '@/app/notifications'
 import { useEventEmitterContextContext } from '@/context/event-emitter'
-import { DSLImportMode, DSLImportStatus } from '@/models/app'
+import { DSLImportStatus } from '@/models/app'
 import { consoleClient } from '@/service/console'
 import { fetchWorkflowDraft } from '@/service/workflow'
 import { collaborationManager } from './collaboration/core/collaboration-manager'
@@ -36,7 +37,6 @@ const UpdateDSLModal = ({ onCancel, onBackup, onImport }: UpdateDSLModalProps) =
   const { t } = useTranslation()
   const appDetail = useAppStore((s) => s.appDetail)
   const [currentFile, setDSLFile] = useState<File>()
-  const [fileContent, setFileContent] = useState<string>()
   const [loading, setLoading] = useState(false)
   const { eventEmitter } = useEventEmitterContextContext()
   const [show, setShow] = useState(true)
@@ -44,21 +44,6 @@ const UpdateDSLModal = ({ onCancel, onBackup, onImport }: UpdateDSLModalProps) =
   const [versions, setVersions] = useState<{ importedVersion: string; systemVersion: string }>()
   const [importId, setImportId] = useState<string>()
   const { handleCheckPluginDependencies } = usePluginDependencies()
-
-  const readFile = (file: File) => {
-    const reader = new FileReader()
-    reader.onload = function (event) {
-      const content = event.target?.result
-      setFileContent(content as string)
-    }
-    reader.readAsText(file)
-  }
-
-  const handleFile = (file?: File) => {
-    setDSLFile(file)
-    setFileContent('')
-    if (file && !file.name.toLowerCase().endsWith('.ifpkg')) readFile(file)
-  }
 
   const handleWorkflowUpdate = useCallback(
     async (app_id: string) => {
@@ -134,36 +119,39 @@ const UpdateDSLModal = ({ onCancel, onBackup, onImport }: UpdateDSLModalProps) =
       return
     }
     try {
-      const isPackage = currentFile.name.toLowerCase().endsWith('.ifpkg')
+      setLoading(true)
+      const source = currentFile.name.toLowerCase().endsWith('.ifpkg')
+        ? { file: currentFile }
+        : await readAppDSLFile(currentFile)
       if (
         appDetail &&
-        (isPackage || (fileContent && validateDSLContent(fileContent, appDetail.mode)))
+        ('file' in source ||
+          source.mode === 'bundle-content' ||
+          validateDSLContent(source.yaml_content ?? '', appDetail.mode))
       ) {
-        setLoading(true)
         const response = await consoleClient.apps.imports.post({
-          body: isPackage
-            ? { file: currentFile, app_id: appDetail.id }
-            : { mode: DSLImportMode.YAML_CONTENT, yaml_content: fileContent, app_id: appDetail.id },
+          body: { ...source, app_id: appDetail.id },
         })
         const { id, status, app_id, imported_dsl_version, current_dsl_version, warnings } = response
 
         if (isImportCompleted(status)) {
-          await handleCompletedImport(status, app_id, warnings)
+          await handleCompletedImport(status, app_id ?? undefined, warnings ?? [])
         } else if (status === DSLImportStatus.PENDING) {
           handlePendingImport(id, imported_dsl_version, current_dsl_version)
         } else {
           setLoading(false)
           toast.error(t(($) => $['common.importFailure'], { ns: 'workflow' }))
         }
-      } else if (fileContent) {
+      } else {
         toast.error(t(($) => $['common.importFailure'], { ns: 'workflow' }))
       }
     } catch {
-      setLoading(false)
       toast.error(t(($) => $['common.importFailure'], { ns: 'workflow' }))
+    } finally {
+      setLoading(false)
+      isCreatingRef.current = false
     }
-    isCreatingRef.current = false
-  }, [currentFile, fileContent, t, appDetail, handleCompletedImport, handlePendingImport])
+  }, [currentFile, t, appDetail, handleCompletedImport, handlePendingImport])
 
   const onUpdateDSLConfirm: MouseEventHandler = async () => {
     try {
@@ -175,7 +163,7 @@ const UpdateDSLModal = ({ onCancel, onBackup, onImport }: UpdateDSLModalProps) =
       const { status, app_id, warnings } = response
 
       if (isImportCompleted(status)) {
-        await handleCompletedImport(status, app_id, warnings)
+        await handleCompletedImport(status, app_id ?? undefined, warnings ?? [])
       } else if (status === DSLImportStatus.FAILED) {
         setLoading(false)
         toast.error(t(($) => $['common.importFailure'], { ns: 'workflow' }))
@@ -235,8 +223,9 @@ const UpdateDSLModal = ({ onCancel, onBackup, onImport }: UpdateDSLModalProps) =
               <Uploader
                 importType="app"
                 file={currentFile}
-                updateFile={handleFile}
+                updateFile={setDSLFile}
                 className="mt-0! w-full"
+                disabled={loading}
               />
             </div>
           </div>
