@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { Then } from '@cucumber/cucumber'
 import { expect } from '@playwright/test'
 
-Then('an app package named after the app should be downloaded', async function (this: DifyWorld) {
+Then('a ZIP bundle named after the app should be downloaded', async function (this: DifyWorld) {
   const appName = this.lastCreatedAppName
   if (!appName) {
     throw new Error(
@@ -17,7 +17,8 @@ Then('an app package named after the app should be downloaded', async function (
   await expect.poll(() => this.capturedDownloads.length, { timeout: 10_000 }).toBeGreaterThan(0)
 
   const download = this.capturedDownloads.at(-1)!
-  expect(download.suggestedFilename()).toBe(`${appName}.ifpkg`)
+  expect(download.suggestedFilename()).toBe(`${appName}.zip`)
+  expect(await download.failure()).toBeNull()
   const content = await readFile(await download.path())
   expect(content.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]))
 })
