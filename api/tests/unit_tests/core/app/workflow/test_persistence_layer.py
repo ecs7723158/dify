@@ -91,6 +91,7 @@ def _make_layer(
     workflow_execution_repo=None,
     workflow_node_execution_repo=None,
     node_run_indices=None,
+    record_node_execution_index=None,
 ):
     system_variables = system_variables or build_system_variables(
         workflow_execution_id="run-id",
@@ -133,6 +134,7 @@ def _make_layer(
         workflow_info=workflow_info,
         workflow_execution_repository=workflow_execution_repo,
         workflow_node_execution_repository=workflow_node_execution_repo,
+        record_node_execution_index=record_node_execution_index,
     )
     layer.initialize(read_only_state, command_channel=None)
     layer.set_node_run_indices(node_run_indices or {})
@@ -524,7 +526,10 @@ class TestWorkflowPersistenceLayer:
         assert exec_repo.saved
 
     def test_resumption_restores_container_execution_before_terminal_event(self):
-        layer, _, node_repo, _ = _make_layer()
+        record_index = MagicMock()
+        layer, _, node_repo, _ = _make_layer(
+            node_run_indices={"loop-exec": 4, "next-exec": 5}, record_node_execution_index=record_index
+        )
         started_at = _naive_utc_now()
         execution = WorkflowNodeExecution(
             id="loop-exec",
@@ -554,6 +559,12 @@ class TestWorkflowPersistenceLayer:
         assert execution.status == WorkflowNodeExecutionStatus.SUCCEEDED
         assert execution.elapsed_time == 2.0
         assert execution.index == 4
+        layer.on_event(
+            NodeRunStartedEvent(
+                id="next-exec", node_id="next", node_type=BuiltinNodeTypes.END, node_title="End", start_at=started_at
+            )
+        )
+        record_index.assert_called_once_with("next-exec", 5)
 
     def test_handle_graph_run_succeeded_updates_execution(self):
         layer, exec_repo, _, runtime_state = _make_layer()
@@ -622,8 +633,17 @@ class TestWorkflowPersistenceLayer:
         assert saved.status == WorkflowExecutionStatus.STOPPED
         assert saved.error_message
 
-    def test_handle_node_started_and_retry(self):
-        layer, _, node_repo, _ = _make_layer(node_run_indices={"exec": 1})
+    @pytest.mark.parametrize("callback_fails", [False, True])
+    def test_handle_node_started_and_retry(self, callback_fails):
+        callback_observations = []
+
+        def record_index(execution_id, index):
+            callback_observations.append((layer._node_execution_cache[execution_id].index, len(node_repo.saved)))
+            if callback_fails:
+                raise RuntimeError("Trace callback failed")
+
+        callback = MagicMock(side_effect=record_index)
+        layer, _, node_repo, _ = _make_layer(node_run_indices={"exec": 1}, record_node_execution_index=callback)
         layer._handle_graph_run_started()
 
         start_event = NodeRunStartedEvent(
@@ -651,6 +671,8 @@ class TestWorkflowPersistenceLayer:
         )
         layer._handle_node_retry(retry_event)
         assert node_repo.saved_exec_data
+        callback.assert_called_once_with("exec", 1)
+        assert callback_observations == [(1, 0)]
 
     def test_agent_v2_caller_row_is_saved_synchronously_before_node_run(self):
         layer, _, node_repo, _ = _make_layer(node_run_indices={"agent-exec": 1})
