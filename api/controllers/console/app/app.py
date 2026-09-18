@@ -1115,6 +1115,7 @@ class AppExportApi(Resource):
                     account=account,
                     include_secret=req_data.include_secret,
                     workflow_id=req_data.workflow_id,
+                    version_id=req_data.version_id,
                 )
             except NoPermissionError as exc:
                 raise Forbidden(str(exc)) from exc

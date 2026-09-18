@@ -226,7 +226,7 @@ const UpdateDSLModal = ({ onCancel, onBackup, onImport }: UpdateDSLModalProps) =
             </div>
             <div className="flex w-full flex-col items-start justify-center gap-4 self-stretch py-4">
               <Uploader
-                importType="app"
+                importType="workflow"
                 file={currentFile}
                 updateFile={setDSLFile}
                 className="mt-0! w-full"
