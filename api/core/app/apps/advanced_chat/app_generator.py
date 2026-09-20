@@ -580,7 +580,6 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
                 message_id=message.id,
             )
 
-            resolved_response_stream_filter = response_stream_filter or ResponseStreamFilter()
             # new thread with request context and contextvars
             context = contextvars.copy_context()
 
@@ -599,7 +598,7 @@ class AdvancedChatAppGenerator(MessageBasedAppGenerator):
                     "graph_engine_layers": graph_engine_layers,
                     "pause_state_config": pause_state_config,
                     "graph_runtime_state": graph_runtime_state,
-                    "response_stream_filter": resolved_response_stream_filter,
+                    "response_stream_filter": response_stream_filter,
                 },
             )
 

@@ -18,11 +18,10 @@ from context.flask_app_context import capture_flask_context
 from core.app.layers import execution_context_layer as module
 from core.app.workflow.file_runtime import init_app
 from core.app.workflow.layers.observability import ObservabilityLayer
-from core.tools.workflow_as_tool.repository import WorkflowToolSource, WorkflowToolSourceRepository
+from core.tools.workflow_as_tool.repository import WorkflowToolSourceRepository
 from core.workflow.workflow_entry import WorkflowEntry
 from core.workflow.workflow_tool_container_handler import WorkflowToolContainerHandler
 from dify_app import DifyApp
-from enums import WorkflowKind
 from graphon.engine import Engine
 from graphon.engine.layer import Layer
 from graphon.engine_events import GraphRunSucceededEvent, NodeEvent
@@ -34,14 +33,12 @@ from graphon.runtime import RuntimeState, VariablePool
 from tests.unit_tests.config_override import apply_config_overrides
 from tests.unit_tests.core.workflow.test_workflow_tool_container import (
     _outer_graph,
-    _source_workflow,
     _workflow_tool_node,
+    _workflow_tool_source,
 )
 
 
-@pytest.mark.parametrize("check", ["context_tokens", "child_parentage"])
 def test_workflow_tool_tracing_survives_worker_handoff(
-    check: str,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     tracer_provider_with_memory_exporter: TracerProvider,
@@ -102,16 +99,8 @@ def test_workflow_tool_tracing_survives_worker_handoff(
                 yield from original_resume(result=result)
 
         monkeypatch.setattr(tool, "_resume_container_events", instrument_resume)
-        app, workflow = _source_workflow()
         repository = MagicMock(spec=WorkflowToolSourceRepository)
-        repository.get_source.return_value = WorkflowToolSource(
-            app_id=app.id,
-            workflow_id=workflow.id,
-            graph_config=workflow.graph_dict,
-            features_dict={},
-            environment_variables=[],
-            workflow_kind=WorkflowKind.STANDARD,
-        )
+        repository.get_source.return_value = _workflow_tool_source()
         engine = Engine(
             graph=_outer_graph(tool),
             runtime_state=state,
@@ -134,12 +123,10 @@ def test_workflow_tool_tracing_survives_worker_handoff(
     resumed_operations = [span for span in spans if span.name == "resume-operation"]
     assert len(resumed_operations) == 1
     assert resumed_operations[0].parent == tool_span.context
-    if check == "context_tokens":
-        assert "was created in a different Context" not in caplog.text
-    else:
-        children = [span for span in spans if (span.attributes or {}).get("node.id") in {"source-start", "source-end"}]
-        assert len(children) == 2
-        assert all(span.parent == tool_span.context for span in children)
+    assert "was created in a different Context" not in caplog.text
+    children = [span for span in spans if (span.attributes or {}).get("node.id") in {"source-start", "source-end"}]
+    assert len(children) == 2
+    assert all(span.parent == tool_span.context for span in children)
 
 
 def test_standalone_node_uses_worker_scoped_tracing_context(

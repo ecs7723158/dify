@@ -3,6 +3,7 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import WorkflowProcessItem from '@/app/components/base/chat/chat/answer/workflow-process'
 import { renderWithConsoleQuery } from '@/test/console/query-data'
+import { createNodeTracing } from '../../__tests__/fixtures'
 import { WorkflowContext } from '../../context'
 import { createWorkflowStore } from '../../store'
 import { BlockEnum, WorkflowRunningStatus } from '../../types'
@@ -20,32 +21,15 @@ vi.mock('@/app/components/workflow/nodes/_base/components/editor/code-editor', (
   default: ({ value }: { value: unknown }) => <pre>{JSON.stringify(value)}</pre>,
 }))
 
-const createTrace = (id: string, overrides: Partial<NodeTracing> = {}): NodeTracing => ({
-  id,
-  index: 1,
-  predecessor_node_id: '',
-  node_id: id,
-  node_type: BlockEnum.Tool,
-  title: id,
-  inputs: {},
-  inputs_truncated: false,
-  process_data: null,
-  process_data_truncated: false,
-  outputs_truncated: false,
-  status: 'succeeded',
-  elapsed_time: 1,
-  metadata: { iterator_length: 0, iterator_index: 0, loop_length: 0, loop_index: 0 },
-  created_at: 1,
-  created_by: { id: 'account', name: 'Tester', email: 'tester@example.com' },
-  finished_at: 2,
-  extras: { workflow_tool: true, icon: { content: '✅', background: '#fff' } },
-  ...overrides,
-})
-
-const createJsonResponse = (data: unknown) =>
-  new Response(JSON.stringify(data), {
-    status: 200,
-    headers: { 'content-type': 'application/json' },
+const createTrace = (id: string, overrides: Partial<NodeTracing> = {}): NodeTracing =>
+  createNodeTracing({
+    id,
+    node_id: id,
+    node_type: BlockEnum.Tool,
+    title: id,
+    status: 'succeeded',
+    extras: { workflow_tool: true, icon: { content: '✅', background: '#fff' } },
+    ...overrides,
   })
 
 describe('Workflow tool tracing', () => {
@@ -58,7 +42,7 @@ describe('Workflow tool tracing', () => {
     async (hasWorkflowStore) => {
       const user = userEvent.setup()
       const root = createTrace('chat-tool-execution', { expand: true })
-      mockRequest.mockImplementation(() => Promise.resolve(createJsonResponse({ data: [] })))
+      mockRequest.mockImplementation(() => Promise.resolve(Response.json({ data: [] })))
       const workflowStore = hasWorkflowStore
         ? createWorkflowStore({ injectWorkflowStoreSliceFn: () => ({ appId: 'chat-app' }) })
         : null
@@ -148,7 +132,7 @@ describe('Workflow tool tracing', () => {
       error: 'Approval service unavailable',
       expand: true,
     })
-    mockRequest.mockImplementation(() => Promise.resolve(createJsonResponse({ data: [] })))
+    mockRequest.mockImplementation(() => Promise.resolve(Response.json({ data: [] })))
 
     renderWithConsoleQuery(
       <TracingPanel
@@ -210,9 +194,9 @@ describe('Workflow tool tracing', () => {
     })
     mockRequest.mockImplementation((url: string) => {
       if (url.endsWith('/root-execution/children'))
-        return Promise.resolve(createJsonResponse({ data: [iteration, nestedTool] }))
+        return Promise.resolve(Response.json({ data: [iteration, nestedTool] }))
       if (url.endsWith('/nested-engine-execution/children'))
-        return Promise.resolve(createJsonResponse({ data: [humanInput] }))
+        return Promise.resolve(Response.json({ data: [humanInput] }))
       throw new Error(`Unexpected request: ${url}`)
     })
 
@@ -251,7 +235,7 @@ describe('Workflow tool tracing', () => {
   it('refreshes open child logs when a paused run finishes', async () => {
     const user = userEvent.setup()
     const root = createTrace('root-execution', { title: 'Approval tool', expand: true })
-    mockRequest.mockResolvedValue(createJsonResponse({ data: [] }))
+    mockRequest.mockResolvedValue(Response.json({ data: [] }))
     const { rerender } = renderWithConsoleQuery(
       <TracingPanel list={[root]} workflowRun={{ appId: 'app', runId: 'run', status: 'paused' }} />,
     )
@@ -260,7 +244,7 @@ describe('Workflow tool tracing', () => {
     await screen.findByText('common.noData')
     mockRequest.mockImplementation(() =>
       Promise.resolve(
-        createJsonResponse({
+        Response.json({
           data: [
             createTrace('completed-child', {
               title: 'Completed approval',
@@ -314,7 +298,7 @@ describe('Workflow tool tracing', () => {
         },
       })
       mockRequest.mockImplementation(() =>
-        Promise.resolve(createJsonResponse({ data: [branch, container, approval] })),
+        Promise.resolve(Response.json({ data: [branch, container, approval] })),
       )
       const { rerender } = renderWithConsoleQuery(
         <TracingPanel
@@ -334,7 +318,7 @@ describe('Workflow tool tracing', () => {
 
       mockRequest.mockImplementation(() =>
         Promise.resolve(
-          createJsonResponse({
+          Response.json({
             data: [
               branch,
               {

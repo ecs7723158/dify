@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator, Mapping
-from typing import Any, Protocol, cast, override
+from typing import TYPE_CHECKING, Any, cast, override
 
 from graphon.enums import (
     NodeExecutionType,
@@ -18,20 +18,9 @@ from graphon.nodes.container_effects import (
 )
 from graphon.nodes.tool.exc import ToolNodeError
 from graphon.nodes.tool.tool_node import ToolNode
-from graphon.nodes.tool_runtime_entities import ToolRuntimeHandle
 
-from .workflow_tool_container_types import WorkflowToolContainerPayload
-
-
-class _WorkflowToolContainerRuntime(Protocol):
-    def build_workflow_tool_container_payload(
-        self,
-        *,
-        tool_runtime: ToolRuntimeHandle,
-        tool_parameters: Mapping[str, Any],
-        inputs_for_log: Mapping[str, Any],
-        workflow_call_depth: int,
-    ) -> WorkflowToolContainerPayload: ...
+if TYPE_CHECKING:
+    from .node_runtime import DifyToolNodeRuntime
 
 
 class DifyWorkflowToolNode(ToolNode):
@@ -81,7 +70,7 @@ class DifyWorkflowToolNode(ToolNode):
             for_log=True,
         )
         try:
-            container_runtime = cast(_WorkflowToolContainerRuntime, self._runtime)
+            container_runtime = cast("DifyToolNodeRuntime", self._runtime)
             payload = container_runtime.build_workflow_tool_container_payload(
                 tool_runtime=tool_runtime,
                 tool_parameters=parameters,

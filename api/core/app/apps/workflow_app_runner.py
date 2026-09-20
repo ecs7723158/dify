@@ -120,15 +120,6 @@ class _WorkflowGraphNodeData(BaseNodeData):
     iteration_id: str | None = None
     loop_id: str | None = None
 
-    def parent_id_for(self, key: str) -> str | None:
-        match key:
-            case "iteration_id":
-                return self.iteration_id
-            case "loop_id":
-                return self.loop_id
-            case _:
-                return None
-
 
 class _WorkflowGraphNodeConfig(BaseModel):
     """Top-level node wrapper used for runner graph filtering."""

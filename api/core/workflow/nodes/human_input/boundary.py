@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 
 from core.repositories.human_input_repository import HumanInputFormRecord, HumanInputFormSubmissionRepository
 from core.workflow.human_input_policy import resolve_variable_select_input_options
@@ -13,18 +13,13 @@ from graphon.engine_events import (
     NodeRunStartedEvent,
     NodeRunSucceededEvent,
 )
-from graphon.entities.pause_reason import HitlRequired, SchedulingPause
+from graphon.entities.pause_reason import HitlRequired
 from graphon.enums import BuiltinNodeTypes
 from graphon.runtime.runtime_state_protocol import ReadOnlyVariablePool
 from graphon.variables.segments import StringSegment
 
 from .constants import OUTPUT_FIELD_ACTION_ID, OUTPUT_FIELD_ACTION_VALUE, OUTPUT_FIELD_RENDERED_CONTENT, TIMEOUT_HANDLE
-from .pause_reason import HumanInputRequired, PauseReason
-from .session_binding import default_session_binding
-
-
-class HumanInputPauseReasonResolutionError(LookupError):
-    """Raised when a graph pause reason cannot be resolved into Dify-owned form state."""
+from .pause_reason import HumanInputRequired
 
 
 class HumanInputFormEventFilter:
@@ -101,44 +96,6 @@ def resolve_human_input_node_id(*, node_id: str, form_id: str, variable_pool: Re
     """Project form ownership onto the visible graph without changing engine identity."""
     container = variable_pool.get(human_input_container_selector(form_id)) if variable_pool is not None else None
     return container.value if isinstance(container, StringSegment) else node_id
-
-
-def enrich_graph_pause_reasons(
-    *,
-    reasons: Sequence[HitlRequired | PauseReason],
-    form_repository: HumanInputFormSubmissionRepository,
-    variable_pool: ReadOnlyVariablePool | None,
-) -> list[PauseReason]:
-    enriched: list[PauseReason] = []
-    for reason in reasons:
-        if isinstance(reason, HitlRequired):
-            enriched_reason = _enrich_hitl_required(
-                reason=reason,
-                form_repository=form_repository,
-                variable_pool=variable_pool,
-            )
-            if enriched_reason is not None:
-                enriched.append(enriched_reason)
-            continue
-        if isinstance(reason, HumanInputRequired | SchedulingPause):
-            enriched.append(reason)
-    return enriched
-
-
-def _enrich_hitl_required(
-    *,
-    reason: HitlRequired,
-    form_repository: HumanInputFormSubmissionRepository,
-    variable_pool: ReadOnlyVariablePool | None,
-) -> HumanInputRequired:
-    form_id = default_session_binding.resolve_form_id_from_session_id(session_id=reason.session_id)
-    record = form_repository.get_by_form_id(form_id)
-    if record is None:
-        raise HumanInputPauseReasonResolutionError(
-            f"missing human input form while enriching pause reason: form_id={form_id}, session_id={reason.session_id}"
-        )
-
-    return build_human_input_pause_reason(reason=reason, record=record, variable_pool=variable_pool)
 
 
 def build_human_input_pause_reason(

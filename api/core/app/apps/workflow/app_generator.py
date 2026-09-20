@@ -364,7 +364,6 @@ class WorkflowAppGenerator(BaseAppGenerator):
                 app_mode=app_model.mode,
             )
 
-            resolved_response_stream_filter = response_stream_filter or ResponseStreamFilter()
             # new thread with request context and contextvars
             context = contextvars.copy_context()
 
@@ -385,7 +384,7 @@ class WorkflowAppGenerator(BaseAppGenerator):
                     "graph_engine_layers": graph_engine_layers,
                     "pause_state_config": pause_state_config,
                     "graph_runtime_state": graph_runtime_state,
-                    "response_stream_filter": resolved_response_stream_filter,
+                    "response_stream_filter": response_stream_filter,
                 },
             )
 

@@ -212,7 +212,6 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
             variable_pool=variable_pool,
             graph_runtime_state=graph_runtime_state,
             workflow_tool_source_repository=self._workflow_tool_source_repository,
-            workflow_tool_event_listener_factory=persistence_layer.create_workflow_tool_event_listener,
             command_channel=command_channel,
             response_stream_filter=self._response_stream_filter,
         )

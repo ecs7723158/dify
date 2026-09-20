@@ -14,7 +14,6 @@ from core.app.workflow.file_runtime import create_dify_workflow_file_runtime, in
 from core.tools.workflow_as_tool.repository import WorkflowToolSource, WorkflowToolSourceRepository
 from core.workflow.workflow_tool_container_handler import WorkflowToolContainerHandler
 from dify_app import DifyApp
-from enums import WorkflowKind
 from graphon.engine import Engine
 from graphon.engine.layer import Layer
 from graphon.engine_events import GraphRunSucceededEvent
@@ -23,8 +22,8 @@ from graphon.file.runtime import peek_workflow_file_runtime, use_workflow_file_r
 from graphon.nodes.base.node import Node
 from tests.unit_tests.core.workflow.test_workflow_tool_container import (
     _outer_graph,
-    _source_workflow,
     _workflow_tool_node,
+    _workflow_tool_source,
 )
 
 
@@ -34,7 +33,7 @@ def test_host_context_preserves_each_engine_file_runtime(monkeypatch: pytest.Mon
     monkeypatch.setattr(module, "capture_current_context", capture_flask_context)
     request_id: ContextVar[str] = ContextVar("request_id")
     caller_runtime = create_dify_workflow_file_runtime()
-    source_app, source_workflow = _source_workflow()
+    source = _workflow_tool_source()
 
     def build_engine(request: str) -> tuple[Engine, list[str]]:
         runtime = create_dify_workflow_file_runtime()
@@ -61,14 +60,7 @@ def test_host_context_preserves_each_engine_file_runtime(monkeypatch: pytest.Mon
             # Source loading and graph construction execute on the dispatcher,
             # outside the worker's node_run_context hooks.
             check_context()
-            return WorkflowToolSource(
-                app_id=source_app.id,
-                workflow_id=source_workflow.id,
-                graph_config=source_workflow.graph_dict,
-                features_dict={},
-                environment_variables=[],
-                workflow_kind=WorkflowKind.STANDARD,
-            )
+            return source
 
         repository = MagicMock(spec=WorkflowToolSourceRepository)
         repository.get_source.side_effect = get_source

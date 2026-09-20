@@ -30,6 +30,7 @@ from core.workflow.workflow_tool_container_handler import (
 )
 from core.workflow.workflow_tool_container_types import WorkflowToolContainerPayload
 from core.workflow.workflow_tool_node import DifyWorkflowToolNode
+from enums import WorkflowKind
 from graphon.engine import Engine
 from graphon.engine.command import InMemoryChannel
 from graphon.engine.event.processor import NodeEventProcessor
@@ -74,8 +75,6 @@ from graphon.nodes.tool_runtime_entities import ToolRuntimeHandle
 from graphon.runtime import RuntimeState, VariablePool
 from graphon.runtime.container_state import create_container_run_state
 from graphon.runtime.execution import ROOT_FRAME_ID
-from models.model import App, AppMode
-from models.workflow import Workflow, WorkflowType
 from tests.workflow_test_utils import build_test_graph_init_params, build_test_run_context
 
 
@@ -310,7 +309,7 @@ def test_node_factory_can_keep_workflow_tool_direct_for_single_step_debug() -> N
     )
 
 
-def _source_workflow() -> tuple[App, Workflow]:
+def _workflow_tool_source() -> WorkflowToolSource:
     source_graph = {
         "nodes": [
             {
@@ -351,33 +350,17 @@ def _source_workflow() -> tuple[App, Workflow]:
             }
         ],
     }
-    app = App(
-        id="00000000-0000-0000-0000-000000000001",
-        tenant_id="tenant",
-        name="Source app",
-        description="",
-        mode=AppMode.WORKFLOW,
-        icon="",
-        enable_site=False,
-        enable_api=False,
-    )
-    workflow = Workflow.new(
-        tenant_id="tenant",
-        app_id=app.id,
-        type=WorkflowType.WORKFLOW.value,
-        version="1",
-        graph=json.dumps(source_graph),
-        features="{}",
-        created_by="user",
+    return WorkflowToolSource(
+        app_id="00000000-0000-0000-0000-000000000001",
+        workflow_id="00000000-0000-0000-0000-000000000002",
+        graph_config=source_graph,
+        features_dict={},
         environment_variables=[],
-        conversation_variables=[],
-        rag_pipeline_variables=[],
+        workflow_kind=WorkflowKind.STANDARD,
     )
-    workflow.id = "00000000-0000-0000-0000-000000000002"
-    return app, workflow
 
 
-def _source_human_input_workflow() -> tuple[App, Workflow]:
+def _human_input_workflow_tool_source() -> WorkflowToolSource:
     human_input = HumanInputNodeData(
         title="Approval",
         form_content="Approve this run?",
@@ -421,9 +404,7 @@ def _source_human_input_workflow() -> tuple[App, Workflow]:
             },
         ],
     }
-    app, workflow = _source_workflow()
-    workflow.graph = json.dumps(source_graph)
-    return app, workflow
+    return replace(_workflow_tool_source(), graph_config=source_graph)
 
 
 class _TestForm(HumanInputFormEntity):
@@ -513,7 +494,7 @@ def _container_handler(
     CustomContainerRequest,
     WorkflowToolSourceRepository,
 ]:
-    app, workflow = _source_workflow()
+    source = _workflow_tool_source()
     parent_pool = VariablePool()
     parent_pool.add(system_variable_selector(SystemVariableKey.USER_ID), "user")
     parent_pool.add(system_variable_selector(SystemVariableKey.WORKFLOW_EXECUTION_ID), "outer-execution")
@@ -543,18 +524,11 @@ def _container_handler(
         )
     )
     source_repository = MagicMock(spec=WorkflowToolSourceRepository)
-    source_repository.get_source.return_value = WorkflowToolSource(
-        app_id=app.id,
-        workflow_id=workflow.id,
-        graph_config=workflow.graph_dict,
-        features_dict=workflow.features_dict,
-        environment_variables=workflow.environment_variables,
-        workflow_kind=workflow.resolved_kind,
-    )
+    source_repository.get_source.return_value = source
     payload = WorkflowToolContainerPayload(
-        source_app_id=app.id,
-        source_workflow_id=workflow.id,
-        source_workflow_version=workflow.version,
+        source_app_id=source.app_id,
+        source_workflow_id=source.workflow_id,
+        source_workflow_version="1",
         inputs={"answer": "ok"} if inputs is None else inputs,
         inputs_for_log={"answer": "ok"} if inputs is None else inputs,
         call_depth=1,
@@ -751,8 +725,7 @@ def test_workflow_tool_handler_preserves_inputs_when_start_validation_fails() ->
     assert resume_task.result.node_run_result.error_type == "ValueError"
 
 
-@pytest.mark.parametrize("container_type", [BuiltinNodeTypes.LOOP, BuiltinNodeTypes.ITERATION])
-def test_workflow_tool_nested_handler_hides_and_persists_marked_child_events(container_type: str) -> None:
+def test_workflow_tool_nested_handler_hides_and_persists_marked_child_events() -> None:
     _, frame_registry, _, request, repository = _container_handler()
     persisted: list[NodeEvent] = []
     event_listeners: dict[str, Callable[[NodeEvent], None]] = {}
@@ -764,7 +737,7 @@ def test_workflow_tool_nested_handler_hides_and_persists_marked_child_events(con
     )
     workflow_tool_handler.handle_request(invocation_id="invocation", request=request)
     built_in_handler = MagicMock()
-    built_in_handler.node_type = container_type
+    built_in_handler.node_type = BuiltinNodeTypes.LOOP
     built_in_handler.should_emit.return_value = True
     hidden_event_listener = MagicMock()
     nested_handler = WorkflowToolNestedContainerHandler(
@@ -893,8 +866,8 @@ def test_workflow_tool_failure_accounting_uses_outer_tool_policy(
 ) -> None:
     execute = MagicMock(side_effect=[CodeExecutionError("source code failed"), {"output": "retried output"}])
     monkeypatch.setattr("core.workflow.node_factory.CodeExecutor.execute_workflow_code_template", execute)
-    app, workflow = _source_workflow()
-    source_graph = dict(workflow.graph_dict)
+    source = _workflow_tool_source()
+    source_graph = dict(source.graph_config)
     source_graph["nodes"].insert(
         1,
         {
@@ -918,14 +891,7 @@ def test_workflow_tool_failure_accounting_uses_outer_tool_policy(
         {"id": "code-end", "source": "source-code", "target": "source-end"},
     ]
     repository = MagicMock(spec=WorkflowToolSourceRepository)
-    repository.get_source.return_value = WorkflowToolSource(
-        app_id=app.id,
-        workflow_id=workflow.id,
-        graph_config=source_graph,
-        features_dict=workflow.features_dict,
-        environment_variables=(),
-        workflow_kind=workflow.resolved_kind,
-    )
+    repository.get_source.return_value = replace(source, graph_config=source_graph)
     node, _, _ = _workflow_tool_node()
     node.node_data.error_strategy = tool_error_strategy
     node.node_data.default_value = [DefaultValue(key="text", type=DefaultValueType.STRING, value="tool fallback")]
@@ -1011,16 +977,8 @@ def test_workflow_tool_empty_outputs_match_direct_invocation() -> None:
 def test_workflow_tool_human_input_pauses_and_resumes_without_duplicate_form(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source_app, source_workflow = _source_human_input_workflow()
     source_repository = MagicMock(spec=WorkflowToolSourceRepository)
-    source_repository.get_source.return_value = WorkflowToolSource(
-        app_id=source_app.id,
-        workflow_id=source_workflow.id,
-        graph_config=source_workflow.graph_dict,
-        features_dict=source_workflow.features_dict,
-        environment_variables=source_workflow.environment_variables,
-        workflow_kind=source_workflow.resolved_kind,
-    )
+    source_repository.get_source.return_value = _human_input_workflow_tool_source()
     handler_factory = partial(WorkflowToolContainerHandler, source_repository=source_repository)
     form_repository = _TestFormRepository()
     human_input_app_ids: list[str] = []

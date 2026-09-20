@@ -132,7 +132,6 @@ class WorkflowEntry:
         workflow_tool_source_repository: WorkflowToolSourceRepository,
         command_channel: CommandChannel | None = None,
         response_stream_filter: ResponseStreamFilter | None = None,
-        workflow_tool_event_listener_factory: WorkflowToolEventListenerFactory | None = None,
     ) -> None:
         """
         Init workflow entry
@@ -149,7 +148,6 @@ class WorkflowEntry:
         :param variable_pool: variable pool
         :param graph_runtime_state: pre-created graph runtime state
         :param workflow_tool_source_repository: loads pinned Workflow Tool sources
-        :param workflow_tool_event_listener_factory: persists source-node events independently of UI delivery
         :param command_channel: command channel for external control (optional, defaults to InMemoryChannel)
         :param response_stream_filter: pre-restored filter for resumed runs (optional, defaults to a fresh
             ResponseStreamFilter for runs with no prior pause)
@@ -165,7 +163,7 @@ class WorkflowEntry:
             command_channel = InMemoryChannel()
 
         self.command_channel = command_channel
-        self.workflow_tool_event_listener_factory = workflow_tool_event_listener_factory
+        self.workflow_tool_event_listener_factory: WorkflowToolEventListenerFactory | None = None
         self._response_stream_filter = response_stream_filter or ResponseStreamFilter()
         file_runtime = create_dify_workflow_file_runtime()
         with use_workflow_file_runtime(file_runtime):

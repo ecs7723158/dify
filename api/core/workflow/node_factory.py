@@ -572,19 +572,12 @@ class DifyNodeFactory(NodeFactory):
         *,
         node_type: NodeType,
         node_version: str,
-        node_data: Mapping[str, Any] | BaseNodeData | None = None,
+        node_data: BaseNodeData,
     ) -> type[Node]:
-        provider_type = (
-            node_data.get("provider_type")
-            if isinstance(node_data, Mapping)
-            else node_data.model_dump().get("provider_type")
-            if node_data is not None
-            else None
-        )
         if (
             self._use_workflow_tool_containers
             and node_type == BuiltinNodeTypes.TOOL
-            and provider_type == ToolProviderType.WORKFLOW
+            and node_data.model_dump().get("provider_type") == ToolProviderType.WORKFLOW
         ):
             return DifyWorkflowToolNode
         return self._resolve_node_class(

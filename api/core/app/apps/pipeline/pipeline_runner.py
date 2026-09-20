@@ -235,7 +235,6 @@ class PipelineRunner(WorkflowBasedAppRunner):
             graph_runtime_state=graph_runtime_state,
             variable_pool=variable_pool,
             workflow_tool_source_repository=self._workflow_tool_source_repository,
-            workflow_tool_event_listener_factory=persistence_layer.create_workflow_tool_event_listener,
         )
 
         self._queue_manager.graph_runtime_state = graph_runtime_state

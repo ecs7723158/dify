@@ -142,7 +142,6 @@ class WorkflowCase:
             workflow_tool_source_repository=SQLAlchemyWorkflowToolSourceRepository(
                 session_maker=sessionmaker(self.engine, expire_on_commit=False)
             ),
-            workflow_tool_event_listener_factory=persistence.create_workflow_tool_event_listener,
         )
         entry.graph_engine.add_layer(persistence)
         prepared = PreparedWorkflowRun(entry, persistence, entity, runs, nodes)

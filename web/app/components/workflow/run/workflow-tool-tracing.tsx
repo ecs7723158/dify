@@ -26,10 +26,7 @@ export default function WorkflowToolTracing({
           params: {
             app_id: workflowRun.appId,
             run_id: workflowRun.runId,
-            node_execution_id:
-              'node_execution_id' in node && typeof node.node_execution_id === 'string'
-                ? node.node_execution_id
-                : node.id,
+            node_execution_id: node.node_execution_id ?? node.id,
           },
         },
         refetchInterval: isActive ? 2000 : false,

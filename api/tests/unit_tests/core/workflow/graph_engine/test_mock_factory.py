@@ -5,7 +5,6 @@ The factory follows the same config adaptation path as production
 implementations before instantiation.
 """
 
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, override
 
 from core.workflow.human_input_adapter import adapt_node_config_for_graph
@@ -91,7 +90,7 @@ class MockNodeFactory(DifyNodeFactory):
         *,
         node_type: NodeType,
         node_version: str,
-        node_data: Mapping[str, Any] | BaseNodeData | None = None,
+        node_data: BaseNodeData,
     ) -> type[Node]:
         mock_class = self._mock_node_types.get(node_type)
         if mock_class is not None:
