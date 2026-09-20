@@ -282,6 +282,7 @@ class TestAppEndpoints:
             response = unwrap(api.get)(
                 api,
                 app_module.AppExportQuery(
+                    format=None if include_workflow_tools else "yaml",
                     include_workflow_tools=include_workflow_tools,
                     include_secret=True,
                     workflow_id="published-workflow",

@@ -195,7 +195,7 @@ def test_url_without_any_import_permission_does_not_download(
     fetch.assert_not_called()
 
 
-@pytest.mark.parametrize("content_kind", ["yaml", "bundle", "ifpkg"])
+@pytest.mark.parametrize("content_kind", ["yaml", "bundle", "app-package", "agent-package"])
 def test_url_quota_is_enforced_after_content_detection(
     app: Flask, monkeypatch: pytest.MonkeyPatch, config_overrides: Callable[..., None], content_kind: str
 ) -> None:
@@ -205,7 +205,13 @@ def test_url_quota_is_enforced_after_content_detection(
     features = Mock()
     features.apps = SimpleNamespace(size=1, limit=1)
     monkeypatch.setattr("controllers.console.wraps.FeatureService.get_features", lambda *_args, **_kwargs: features)
-    content = {"yaml": b"app: {}", "bundle": _bundle_archive(), "ifpkg": _roster_archive().getvalue()}[content_kind]
+    with AppPackageService().export(dsl="kind: app\napp: {mode: workflow}\n", name="Workflow") as package:
+        content = {
+            "yaml": b"app: {}",
+            "bundle": _bundle_archive(),
+            "app-package": package.archive.read(),
+            "agent-package": _roster_archive().getvalue(),
+        }[content_kind]
     fetch = _mock_download(monkeypatch, content)
     importer = Mock()
     importer.import_package.return_value = RosterAgentPackageImportResult(
@@ -218,7 +224,7 @@ def test_url_quota_is_enforced_after_content_detection(
         method="POST",
         json={"mode": "yaml-url", "yaml_url": "https://example.com/download"},
     ):
-        if content_kind != "ifpkg":
+        if content_kind != "agent-package":
             with pytest.raises(Forbidden, match="number of apps"):
                 unwrap(api.post)(api, account)
             importer.import_package.assert_not_called()
@@ -410,7 +416,7 @@ def test_existing_export_route_returns_ifpkg_for_agent(
 @pytest.mark.parametrize(
     "mode", [AppMode.WORKFLOW, AppMode.ADVANCED_CHAT, AppMode.CHAT, AppMode.COMPLETION, AppMode.AGENT_CHAT]
 )
-@pytest.mark.parametrize("query", [{}, {"format": "ifpkg"}])
+@pytest.mark.parametrize("query", [{}, {"format": "ifpkg"}, {"format": "ifpkg", "include_workflow_tools": "true"}])
 def test_default_export_packages_ordinary_app_dsl(
     app: Flask, monkeypatch: pytest.MonkeyPatch, mode: AppMode, query: dict[str, str]
 ) -> None:
@@ -458,27 +464,35 @@ def test_ordinary_package_import_uses_dsl_permissions_and_confirmation(
     monkeypatch.setattr(api, "_import_dsl", import_dsl)
     agent_import = Mock()
     monkeypatch.setattr(api, "_import_agent_package", agent_import)
+    options = {
+        "name": "Renamed",
+        "description": "Imported app",
+        "icon_type": "emoji",
+        "icon": "robot",
+        "icon_background": "#FFFFFF",
+    }
     with AppPackageService().export(dsl=dsl, name="Workflow") as package:
-        form = {"file": (package.archive, "workflow.ifpkg"), "name": "Renamed"}
+        form = {"file": (package.archive, "workflow.ifpkg"), **options}
         if app_id:
             form["app_id"] = app_id
         if from_url:
-            _mock_download(monkeypatch, package.archive.read())
+            fetch = _mock_download(monkeypatch, package.archive.read())
             with app.test_request_context(
                 method="POST",
                 json={
                     "mode": "yaml-url",
                     "yaml_url": "https://example.com/workflow.ifpkg",
-                    "name": "Renamed",
+                    **options,
                     "app_id": app_id,
                 },
             ):
                 assert unwrap(api.post)(api, account) == ({"status": "pending"}, status)
+            fetch.assert_called_once()
         else:
             with app.test_request_context(method="POST", data=form):
                 assert unwrap(api.post)(api, account) == ({"status": "pending"}, status)
     import_dsl.assert_called_once_with(
-        import_module.AppImportPayload(mode="yaml-content", yaml_content=dsl, name="Renamed", app_id=app_id),
+        import_module.AppImportPayload(mode="yaml-content", yaml_content=dsl, app_id=app_id, **options),
         account,
         package=ANY,
     )

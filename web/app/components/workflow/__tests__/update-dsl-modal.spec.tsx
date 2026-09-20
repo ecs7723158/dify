@@ -27,7 +27,11 @@ vi.mock('@/service/base', () => ({
   request: async (url: string, _init: RequestInit, options: { request: Request }) => {
     const response = url.endsWith('/confirm')
       ? await mockImportDSLConfirm({ import_id: url.split('/').at(-2) })
-      : await mockImportDSL(await options.request.json())
+      : await mockImportDSL(
+          options.request.headers.get('content-type')?.startsWith('multipart/form-data')
+            ? Object.fromEntries(await options.request.formData())
+            : await options.request.json(),
+        )
     return Response.json(response)
   },
 }))
@@ -119,13 +123,21 @@ describe('UpdateDSLModal', () => {
   }
 
   it('uploads an ifpkg without decoding it as YAML when overwriting a workflow', async () => {
-    mockImportDSL.mockResolvedValue({ status: DSLImportStatus.COMPLETED, app_id: 'app-1' })
-    render(<UpdateDSLModal {...defaultProps} />)
-    const file = new File([new Uint8Array([0x50, 0x4b, 0xff])], 'workflow.IFPKG')
-    fireEvent.change(screen.getByTestId('dsl-file-input'), { target: { files: [file] } })
-    fireEvent.click(screen.getByRole('button', { name: 'workflow.common.overwriteAndImport' }))
-    await waitFor(() => expect(mockImportDSL).toHaveBeenCalledWith({ file, app_id: 'app-1' }))
+    const user = userEvent.setup()
+    const { queryClient } = renderModal()
+    const bytes = new Uint8Array([0x50, 0x4b, 0xff])
+    const file = new File([bytes], 'workflow.IFPKG')
+    await user.upload(screen.getByTestId('dsl-file-input'), file)
+    await user.click(screen.getByRole('button', { name: 'workflow.common.overwriteAndImport' }))
+
+    await waitFor(() =>
+      expect(mockImportDSL).toHaveBeenCalledWith({ file: expect.any(File), app_id: 'app-1' }),
+    )
+    const uploadedFile = mockImportDSL.mock.calls[0]![0].file as File
+    expect(uploadedFile.name).toBe(file.name)
+    expect(new Uint8Array(await uploadedFile.arrayBuffer())).toEqual(bytes)
     await waitFor(() => expect(defaultProps.onCancel).toHaveBeenCalled())
+    expect(queryClient.getQueryState(workflowToolsKey)?.isInvalidated).toBe(true)
   })
 
   it('should keep import disabled until a file is selected', () => {
