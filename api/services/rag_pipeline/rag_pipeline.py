@@ -92,6 +92,7 @@ from services.workflow_node_execution_trace_service import (
 )
 from services.workflow_ref_service import WorkflowRef
 from services.workflow_restore import apply_published_workflow_snapshot_to_draft
+from services.workflow_run_agg import WorkflowRunAgg
 
 logger = logging.getLogger(__name__)
 
@@ -595,6 +596,7 @@ class RagPipelineService:
 
         workflow_node_execution = self._handle_node_run_result(
             getter=lambda: WorkflowEntry.single_step_run(
+                execution_driver=WorkflowRunAgg.run,
                 workflow=draft_workflow,
                 node_id=node_id,
                 user_inputs=user_inputs,
@@ -1391,6 +1393,7 @@ class RagPipelineService:
 
         workflow_node_execution = self._handle_node_run_result(
             getter=lambda: WorkflowEntry.single_step_run(
+                execution_driver=WorkflowRunAgg.run,
                 workflow=draft_workflow,
                 node_id=node_id,
                 user_inputs={},
@@ -1515,7 +1518,7 @@ class RagPipelineService:
         workflow = self.get_published_workflow(pipeline)
         if not workflow:
             raise ValueError("Workflow not found")
-        PipelineGenerator().generate(
+        PipelineGenerator(execution_driver=WorkflowRunAgg.run).generate(
             session=self._session,
             pipeline=pipeline,
             workflow=workflow,

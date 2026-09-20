@@ -339,13 +339,14 @@ class WorkflowToolContainerHandler:
         source_run_context[DIFY_RUN_CONTEXT_KEY] = run_context.model_copy(
             update={"app_id": source.app_id, "workflow_tool_invocation_id": run_state.invocation_id}
         )
+        parent_factory = parent_frame.graph.node_factory
         graph_init_context = DifyGraphInitContext(
             workflow_id=source.workflow_id,
             graph_config=graph_config,
             run_context=source_run_context,
             call_depth=payload.call_depth,
+            execution_driver=parent_factory.execution_driver if isinstance(parent_factory, DifyNodeFactory) else None,
         )
-        parent_factory = parent_frame.graph.node_factory
         human_input_run_context = (
             parent_factory.human_input_run_context
             if isinstance(parent_factory, DifyNodeFactory)

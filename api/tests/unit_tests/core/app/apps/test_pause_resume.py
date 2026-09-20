@@ -39,6 +39,7 @@ from models.account import Account
 from models.enums import ConversationFromSource
 from models.model import App, AppMode, Conversation, Message
 from models.workflow import Workflow, WorkflowType
+from services.workflow_run_agg import WorkflowRunAgg
 from tests.workflow_test_utils import build_test_graph_init_params
 
 if "core.ops.ops_trace_manager" not in sys.modules:
@@ -287,7 +288,7 @@ def test_workflow_app_pause_resume_matches_baseline(mocker: MockerFixture):
 
     resumed_state = RuntimeState.from_snapshot(snapshot)
 
-    generator = wf_app_gen_module.WorkflowAppGenerator()
+    generator = wf_app_gen_module.WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
 
     def _fake_generate(**kwargs):
         state: RuntimeState = kwargs["graph_runtime_state"]
@@ -331,7 +332,7 @@ def test_advanced_chat_pause_resume_matches_baseline(mocker: MockerFixture, unbo
 
     resumed_state = RuntimeState.from_snapshot(snapshot)
 
-    generator = adv_app_gen_module.AdvancedChatAppGenerator()
+    generator = adv_app_gen_module.AdvancedChatAppGenerator(execution_driver=WorkflowRunAgg.run)
 
     def _fake_generate(**kwargs):
         state: RuntimeState = kwargs["graph_runtime_state"]

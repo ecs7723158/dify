@@ -49,8 +49,9 @@ class WorkflowNodeExecutionRepository(Protocol):
         order_config: OrderConfig | None = None,
         *,
         include_workflow_tools: bool = False,
+        include_paused: bool = False,
     ) -> Sequence[WorkflowNodeExecution]:
-        """Optionally include owned Workflow Tool nodes for trace export from a root-app scope."""
+        """Include owned tool nodes for trace export, or paused nodes for resumption when requested."""
         ...
 
 

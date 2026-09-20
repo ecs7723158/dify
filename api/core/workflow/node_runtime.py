@@ -119,6 +119,7 @@ class PollingLLMRuntimeProtocol(Protocol):
 
 
 if TYPE_CHECKING:
+    from core.app.apps.workflow_app_runner import WorkflowRunDriver
     from core.tools.__base.tool import Tool
     from core.tools.entities.tool_entities import ToolInvokeMessage as CoreToolInvokeMessage
     from graphon.nodes.llm.file_saver import LLMFileSaver
@@ -530,10 +531,12 @@ class DifyToolNodeRuntime(ToolNodeRuntimeProtocol):
         self,
         run_context: Mapping[str, Any] | DifyRunContext,
         session_maker: sessionmaker[Session] | None = None,
+        execution_driver: WorkflowRunDriver | None = None,
     ) -> None:
         self._run_context = resolve_dify_run_context(run_context)
         self._file_reference_factory = DifyFileReferenceFactory(self._run_context)
         self._session_maker = session_maker
+        self._execution_driver = execution_driver
 
     @property
     def file_reference_factory(self) -> FileReferenceFactoryProtocol:
@@ -561,6 +564,7 @@ class DifyToolNodeRuntime(ToolNodeRuntimeProtocol):
                 self._run_context.user_id,
                 self._run_context.invoke_from,
                 variable_pool,
+                execution_driver=self._execution_driver,
             )
         except ToolNodeError:
             raise

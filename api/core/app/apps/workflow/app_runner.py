@@ -1,7 +1,7 @@
 import logging
 import time
 from collections.abc import Sequence
-from typing import cast
+from typing import cast, override
 
 from core.app.apps.base_app_queue_manager import AppQueueManager
 from core.app.apps.execution_coordinator import app_task_command_channel_key
@@ -12,7 +12,7 @@ from core.app.apps.workflow.command_channels import (
     StopFlagCommandChannel,
 )
 from core.app.apps.workflow.stop_aware_ready_queue import attach_stop_aware_ready_queue
-from core.app.apps.workflow_app_runner import WorkflowBasedAppRunner
+from core.app.apps.workflow_app_runner import PreparedWorkflowRun, WorkflowBasedAppRunner, WorkflowRunDriver
 from core.app.entities.app_invoke_entities import (
     DifyRunContext,
     InvokeFrom,
@@ -29,7 +29,6 @@ from core.workflow.system_variables import build_bootstrap_variables, build_syst
 from core.workflow.variable_pool_initializer import add_node_inputs_to_pool, add_variables_to_pool
 from core.workflow.workflow_entry import WorkflowEntry
 from extensions.ext_redis import redis_client
-from extensions.otel import WorkflowAppRunnerHandler, trace_span
 from extensions.workflow_warm_shutdown import WORKFLOW_WARM_SHUTDOWN_ABORT_REASON, celery_warm_shutdown_started
 from graphon.engine.command import RedisChannel
 from graphon.engine.filter import ResponseStreamFilter
@@ -57,6 +56,7 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
         workflow: Workflow,
         system_user_id: str,
         root_node_id: str | None = None,
+        execution_driver: WorkflowRunDriver | None = None,
         workflow_execution_repository: WorkflowExecutionRepository,
         workflow_node_execution_repository: WorkflowNodeExecutionRepository,
         workflow_tool_source_repository: WorkflowToolSourceRepository,
@@ -66,6 +66,7 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
     ):
         super().__init__(
             queue_manager=queue_manager,
+            execution_driver=execution_driver,
             variable_loader=variable_loader,
             app_id=application_generate_entity.app_config.app_id,
             graph_engine_layers=graph_engine_layers,
@@ -80,11 +81,9 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
         self._resume_graph_runtime_state = graph_runtime_state
         self._response_stream_filter = response_stream_filter
 
-    @trace_span(WorkflowAppRunnerHandler)
-    def run(self):
-        """
-        Run application
-        """
+    @override
+    def prepare(self) -> PreparedWorkflowRun | None:
+        """Prepare graph execution and its persistence dependencies."""
         app_config = self.application_generate_entity.app_config
         app_config = cast(WorkflowAppConfig, app_config)
         invoke_from = self.application_generate_entity.invoke_from
@@ -235,5 +234,10 @@ class WorkflowAppRunner(WorkflowBasedAppRunner):
         for layer in self._graph_engine_layers:
             workflow_entry.graph_engine.add_layer(layer)
 
-        for event in self._run_workflow(workflow_entry):
-            self._handle_event(workflow_entry, event)
+        return PreparedWorkflowRun(
+            entry=workflow_entry,
+            persistence_layer=persistence_layer,
+            generate_entity=self.application_generate_entity,
+            workflow_execution_repository=self._workflow_execution_repository,
+            workflow_node_execution_repository=self._workflow_node_execution_repository,
+        )

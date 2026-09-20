@@ -1,20 +1,13 @@
 from dataclasses import dataclass
-from typing import Annotated, Literal, Self, override
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field
 from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.app.entities.app_invoke_entities import AdvancedChatAppGenerateEntity, WorkflowAppGenerateEntity
-from core.repositories.human_input_repository import HumanInputFormSubmissionRepository
-from core.workflow.nodes.human_input.boundary import enrich_graph_pause_reasons
-from core.workflow.system_variables import SystemVariableKey, get_system_text
 from graphon.engine.filter import ResponseStreamFilter
-from graphon.engine.layer import Layer
-from graphon.engine_events import EngineEvent, GraphRunPausedEvent
 from models.model import AppMode
-from repositories.api_workflow_run_repository import APIWorkflowRunRepository
-from repositories.factory import DifyAPIRepositoryFactory
 
 
 # Wrapper types for `WorkflowAppGenerateEntity` and
@@ -68,89 +61,7 @@ class WorkflowResumptionContext(BaseModel):
 
 @dataclass(frozen=True)
 class PauseStateLayerConfig:
-    """Configuration container for instantiating pause persistence layers."""
+    """Persistence configuration for resumable workflow runs."""
 
     session_factory: Engine | sessionmaker[Session]
     state_owner_user_id: str
-
-
-class PauseStatePersistenceLayer(Layer):
-    def __init__(
-        self,
-        session_factory: Engine | sessionmaker[Session],
-        generate_entity: WorkflowAppGenerateEntity | AdvancedChatAppGenerateEntity,
-        state_owner_user_id: str,
-        response_stream_filter: ResponseStreamFilter,
-    ):
-        """Create a PauseStatePersistenceLayer.
-
-        The `state_owner_user_id` is used when creating state file for pause.
-        It generally should id of the creator of workflow.
-
-        `response_stream_filter` must be the exact same instance that
-        `WorkflowEntry` is using to stream this run's events — this layer
-        dumps its state on pause, and a different instance would silently
-        persist the wrong (empty) filter state.
-        """
-        if isinstance(session_factory, Engine):
-            session_factory = sessionmaker(session_factory)
-        super().__init__()
-        self._session_maker = session_factory
-        self._state_owner_user_id = state_owner_user_id
-        self._generate_entity = generate_entity
-        self._response_stream_filter = response_stream_filter
-        self._paused_event: GraphRunPausedEvent | None = None
-
-    def _get_repo(self) -> APIWorkflowRunRepository:
-        return DifyAPIRepositoryFactory.create_api_workflow_run_repository(self._session_maker)
-
-    @override
-    def on_graph_start(self) -> None:
-        """Clear any pause captured by a prior run."""
-        self._paused_event = None
-
-    @override
-    def on_event(self, event: EngineEvent) -> None:
-        """Capture the pause until execution is safe to snapshot."""
-        if isinstance(event, GraphRunPausedEvent):
-            self._paused_event = event
-
-    def persist_pending_pause(self) -> None:
-        """Persist paused state only after the engine and its threads stop."""
-        event = self._paused_event
-        self._paused_event = None
-        if event is None:
-            return
-
-        entity_wrapper: _GenerateEntityUnion
-        if isinstance(self._generate_entity, WorkflowAppGenerateEntity):
-            entity_wrapper = _WorkflowGenerateEntityWrapper(entity=self._generate_entity)
-        else:
-            entity_wrapper = _AdvancedChatAppGenerateEntityWrapper(entity=self._generate_entity)
-
-        state = WorkflowResumptionContext(
-            serialized_graph_runtime_state=self.runtime_state.dumps(),
-            generate_entity=entity_wrapper,
-            serialized_response_stream_filter_state=self._response_stream_filter.dumps(),
-        )
-
-        workflow_run_id = get_system_text(
-            self.runtime_state.variable_pool,
-            SystemVariableKey.WORKFLOW_EXECUTION_ID,
-        )
-        assert workflow_run_id is not None
-        # NOTE(QuantumGhost): Dify owns the pause-reason semantics that cross the
-        # persistence boundary. Graphon session ids are translated back to form ids
-        # here so repository/model layers only handle Dify-owned pause reasons.
-        pause_reasons = enrich_graph_pause_reasons(
-            reasons=event.reasons,
-            form_repository=HumanInputFormSubmissionRepository(),
-            variable_pool=self.runtime_state.variable_pool,
-        )
-        repo = self._get_repo()
-        repo.create_workflow_pause(
-            workflow_run_id=workflow_run_id,
-            state_owner_user_id=self._state_owner_user_id,
-            state=state.dumps(),
-            pause_reasons=pause_reasons,
-        )

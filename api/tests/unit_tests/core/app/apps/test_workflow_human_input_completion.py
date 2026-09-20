@@ -1,5 +1,5 @@
 import json
-from collections.abc import Mapping
+from collections.abc import Generator, Mapping
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from types import SimpleNamespace
@@ -11,10 +11,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from configs import dify_config
+from core.app.app_config.entities import WorkflowUIBasedAppConfig
 from core.app.apps.base_app_queue_manager import AppQueueManager, PublishFrom
 from core.app.apps.common import workflow_response_converter
-from core.app.apps.workflow_app_runner import WorkflowBasedAppRunner
-from core.app.entities.app_invoke_entities import InvokeFrom, UserFrom
+from core.app.apps.workflow_app_runner import PreparedWorkflowRun, WorkflowBasedAppRunner
+from core.app.entities.app_invoke_entities import InvokeFrom, UserFrom, WorkflowAppGenerateEntity
 from core.app.entities.queue_entities import (
     AppQueueEvent,
     QueueHumanInputFormFilledEvent,
@@ -23,8 +24,11 @@ from core.app.entities.queue_entities import (
     QueueWorkflowStartedEvent,
     QueueWorkflowSucceededEvent,
 )
+from core.app.workflow.layers.persistence import PersistenceWorkflowInfo, WorkflowPersistenceLayer
+from core.db.session_factory import session_factory
 from core.repositories.human_input_repository import HumanInputFormRepositoryImpl, HumanInputFormSubmissionRepository
-from core.tools.workflow_as_tool.repository import WorkflowToolSourceRepository
+from core.repositories.sqlalchemy_workflow_execution_repository import SQLAlchemyWorkflowExecutionRepository
+from core.repositories.sqlalchemy_workflow_node_execution_repository import SQLAlchemyWorkflowNodeExecutionRepository
 from core.workflow.node_runtime import DifyFileReferenceFactory
 from core.workflow.nodes.human_input.boundary import human_input_container_selector
 from core.workflow.nodes.human_input.callback import DifyHITLCallback
@@ -40,19 +44,24 @@ from core.workflow.nodes.human_input.enums import HumanInputFormKind, HumanInput
 from core.workflow.workflow_entry import WorkflowEntry
 from extensions.storage.storage_type import StorageType
 from graphon.engine.ready_queue import StartTask
+from graphon.engine_events import EngineEvent, GraphRunFailedEvent
 from graphon.entities import WorkflowStartReason
 from graphon.entities.pause_reason import HitlRequired
-from graphon.enums import BuiltinNodeTypes
+from graphon.enums import BuiltinNodeTypes, WorkflowType
 from graphon.file.helpers import verify_file_signature
 from graphon.graph import Graph
 from graphon.nodes.human_input.entities import HumanInputNodeData as GraphonHumanInputNodeData
 from graphon.nodes.human_input.human_input_node import HumanInputNode
 from graphon.runtime import RuntimeState, VariablePool
 from graphon.runtime.execution import ROOT_FRAME_ID
-from models import UploadFile
-from models.enums import CreatorUserRole
+from models import Account, UploadFile
+from models.enums import CreatorUserRole, WorkflowRunTriggeredFrom
 from models.execution_extra_content import HumanInputContent
 from models.human_input import HumanInputForm
+from models.model import AppMode
+from models.workflow import WorkflowNodeExecutionTriggeredFrom
+from repositories.workflow_tool_source_repository import SQLAlchemyWorkflowToolSourceRepository
+from services.workflow_run_agg import WorkflowRunAgg
 from tests.unit_tests.core.app.apps.advanced_chat.test_generate_task_pipeline import _build_pipeline
 from tests.unit_tests.core.app.apps.common.test_workflow_response_converter_human_input import _build_converter
 from tests.workflow_test_utils import build_test_graph_init_params, build_test_run_context
@@ -162,8 +171,55 @@ def _make_paused_workflow(
         call_depth=0,
         variable_pool=state.variable_pool,
         graph_runtime_state=state,
-        workflow_tool_source_repository=MagicMock(spec=WorkflowToolSourceRepository),
+        workflow_tool_source_repository=SQLAlchemyWorkflowToolSourceRepository(
+            session_maker=session_factory.get_session_maker()
+        ),
     )
+
+
+def _resume_events(runner: WorkflowBasedAppRunner, entry: WorkflowEntry) -> Generator[EngineEvent, None, None]:
+    """Resume through orchestration with actual repositories and the real Engine."""
+    entity = WorkflowAppGenerateEntity(
+        task_id="task",
+        app_config=WorkflowUIBasedAppConfig(
+            tenant_id="tenant",
+            app_id="app",
+            app_mode=AppMode.WORKFLOW,
+            workflow_id="workflow",
+        ),
+        inputs={},
+        files=[],
+        user_id="user",
+        stream=True,
+        invoke_from=InvokeFrom.DEBUGGER,
+        workflow_execution_id="run-1",
+    )
+    user = Account(name="Tester", email="tester@example.com")
+    user.id = "user"
+    factory = session_factory.get_session_maker()
+    runs = SQLAlchemyWorkflowExecutionRepository(
+        factory,
+        tenant_id="tenant",
+        app_id="app",
+        user=user,
+        triggered_from=WorkflowRunTriggeredFrom.DEBUGGING,
+    )
+    nodes = SQLAlchemyWorkflowNodeExecutionRepository(
+        factory,
+        tenant_id="tenant",
+        app_id="app",
+        user=user,
+        triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
+    )
+    layer = WorkflowPersistenceLayer(
+        application_generate_entity=entity,
+        workflow_info=PersistenceWorkflowInfo("workflow", WorkflowType.WORKFLOW, "draft", {}),
+        workflow_execution_repository=runs,
+        workflow_node_execution_repository=nodes,
+    )
+    entry.graph_engine.add_layer(layer)
+    prepared = PreparedWorkflowRun(entry, layer, entity, runs, nodes)
+    return WorkflowRunAgg(prepared, runner).iter_events()
 
 
 @pytest.mark.parametrize("status", [HumanInputFormStatus.SUBMITTED, HumanInputFormStatus.TIMEOUT])
@@ -182,8 +238,8 @@ def test_resume_publishes_only_the_completed_form_among_repeated_node_invocation
     )
     original_reasons = tuple(entry.graph_engine.runtime_state.graph_execution.pause_reasons)
 
-    for event in runner._run_workflow(entry):
-        runner._handle_event(entry, event)
+    for event in _resume_events(runner, entry):
+        runner.handle_event(entry, event)
 
     published = [call.args[0] for call in queue.publish.call_args_list]
     assert isinstance(published[0], QueueWorkflowStartedEvent)
@@ -219,8 +275,9 @@ def test_resume_rejects_form_outside_the_trusted_execution_owner(sqlite_session:
     runner = WorkflowBasedAppRunner(queue_manager=queue, app_id="app")
     entry = _make_paused_workflow(runner, [form])
 
-    with pytest.raises(ValueError, match="does not belong"):
-        list(runner._run_workflow(entry))
+    events = list(_resume_events(runner, entry))
+    assert isinstance(events[-1], GraphRunFailedEvent)
+    assert "does not belong" in events[-1].error
 
     assert not any(isinstance(call.args[0], QueueHumanInputFormFilledEvent) for call in queue.publish.call_args_list)
 
@@ -282,8 +339,8 @@ def test_resume_refreshes_expired_file_and_file_list_urls_before_form_completion
     queue = MagicMock(spec=AppQueueManager)
     runner = WorkflowBasedAppRunner(queue_manager=queue, app_id="app")
     entry = _make_paused_workflow(runner, [form])
-    for event in runner._run_workflow(entry):
-        runner._handle_event(entry, event)
+    for event in _resume_events(runner, entry):
+        runner.handle_event(entry, event)
 
     completions = [
         call.args[0]
@@ -335,8 +392,8 @@ def test_form_completed_during_resume_is_published_once_before_the_terminal_even
             repository.mark_timeout(form_id=second.id, timeout_status=late_status)
 
     queue.publish.side_effect = complete_second_form_during_execution
-    for event in runner._run_workflow(entry):
-        runner._handle_event(entry, event)
+    for event in _resume_events(runner, entry):
+        runner.handle_event(entry, event)
 
     published = [call.args[0] for call in queue.publish.call_args_list]
     completions = [
@@ -358,8 +415,8 @@ def test_waiting_form_expiring_during_resume_publishes_timeout_before_success(sq
     runner = WorkflowBasedAppRunner(queue_manager=queue, app_id="app")
     entry = _make_paused_workflow(runner, [form], human_input_form=form)
 
-    for event in runner._run_workflow(entry):
-        runner._handle_event(entry, event)
+    for event in _resume_events(runner, entry):
+        runner.handle_event(entry, event)
 
     published = [call.args[0] for call in queue.publish.call_args_list]
     assert isinstance(published[-1], QueueWorkflowSucceededEvent)

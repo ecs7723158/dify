@@ -499,6 +499,7 @@ class SQLAlchemyWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository)
         triggered_from: WorkflowNodeExecutionTriggeredFrom | None = None,
         *,
         include_workflow_tools: bool = False,
+        include_paused: bool = False,
     ) -> Sequence[WorkflowNodeExecutionModel]:
         """
         Retrieve all WorkflowNodeExecution database models for a specific workflow run.
@@ -509,6 +510,7 @@ class SQLAlchemyWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository)
         Trace export can include source-app Workflow Tool nodes owned by this
         repository's root app. This requires app_id; ordinary reads keep their
         existing app/origin scope.
+        Paused nodes stay hidden unless resume hydration requests include_paused.
 
         This method directly returns database models without converting to domain models,
         which is useful when you need to access database-specific fields like triggered_from.
@@ -543,8 +545,9 @@ class SQLAlchemyWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository)
                 WorkflowNodeExecutionModel.workflow_run_id == workflow_run_id,
                 WorkflowNodeExecutionModel.tenant_id == self._tenant_id,
                 owner_filter,
-                WorkflowNodeExecutionModel.status != WorkflowNodeExecutionStatus.PAUSED,
             )
+            if not include_paused:
+                stmt = stmt.where(WorkflowNodeExecutionModel.status != WorkflowNodeExecutionStatus.PAUSED)
 
             # Apply ordering if provided
             if order_config and order_config.order_by:
@@ -578,6 +581,7 @@ class SQLAlchemyWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository)
         triggered_from: WorkflowNodeExecutionTriggeredFrom | None = None,
         *,
         include_workflow_tools: bool = False,
+        include_paused: bool = False,
     ) -> Sequence[WorkflowNodeExecution]:
         """
         Retrieve all node executions for a workflow execution.
@@ -595,7 +599,11 @@ class SQLAlchemyWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository)
             A list of node execution instances
         """
         db_models = self.get_db_models_by_workflow_run(
-            workflow_execution_id, order_config, triggered_from, include_workflow_tools=include_workflow_tools
+            workflow_execution_id,
+            order_config,
+            triggered_from,
+            include_workflow_tools=include_workflow_tools,
+            include_paused=include_paused,
         )
 
         with ThreadPoolExecutor(max_workers=10) as executor:

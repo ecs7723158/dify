@@ -11,6 +11,7 @@ from core.app.layers.execution_context_layer import ExecutionContextLayer
 from core.tools.workflow_as_tool.repository import WorkflowToolSource, WorkflowToolSourceRepository
 from core.workflow.node_factory import DifyNodeFactory
 from core.workflow.workflow_tool_container_handler import WorkflowToolContainerHandler
+from enums import WorkflowKind
 from extensions.storage.storage_type import StorageType
 from graphon.engine import Engine
 from graphon.engine.command import InMemoryChannel
@@ -87,7 +88,7 @@ def test_workflow_tool_dispatcher_enforces_file_ownership(
             start_at=1,
         )
     template_node, runtime, payload = _workflow_tool_node(runtime_state)
-    monkeypatch.setattr("core.workflow.node_factory.DifyToolNodeRuntime", lambda _: runtime)
+    monkeypatch.setattr("core.workflow.node_factory.DifyToolNodeRuntime", lambda _, **_kwargs: runtime)
     tool_data = template_node.node_data.model_dump(mode="python")
     nodes = [
         {"id": "start", "data": {"type": "start", "title": "Start", "variables": list[object]()}},
@@ -174,7 +175,7 @@ def test_workflow_tool_dispatcher_enforces_file_ownership(
         },
         features_dict={},
         environment_variables=[],
-        workflow_kind="standard",
+        workflow_kind=WorkflowKind.STANDARD,
     )
     repository = MagicMock(spec=WorkflowToolSourceRepository)
     repository.get_source.return_value = source

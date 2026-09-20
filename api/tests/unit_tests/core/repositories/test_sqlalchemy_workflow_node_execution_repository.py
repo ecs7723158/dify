@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from configs import dify_config
+from core.repositories.celery_workflow_node_execution_repository import CeleryWorkflowNodeExecutionRepository
 from core.repositories.factory import OrderConfig
 from core.repositories.sqlalchemy_workflow_node_execution_repository import (
     SQLAlchemyWorkflowNodeExecutionRepository,
@@ -478,6 +479,48 @@ def test_get_by_workflow_execution_maps_real_rows_to_domain(
     assert len(domains) == 1
     assert domains[0].inputs == {"input": 1}
     assert domains[0].outputs == {"output": 2}
+
+
+@pytest.mark.parametrize(
+    "repository_type", [SQLAlchemyWorkflowNodeExecutionRepository, CeleryWorkflowNodeExecutionRepository]
+)
+def test_resume_history_includes_paused_nodes_without_changing_default_reads(
+    sqlite_session_factory: sessionmaker[Session],
+    repository_type: type[SQLAlchemyWorkflowNodeExecutionRepository | CeleryWorkflowNodeExecutionRepository],
+) -> None:
+    user = _account()
+    writer = SQLAlchemyWorkflowNodeExecutionRepository(
+        sqlite_session_factory,
+        tenant_id="tenant-1",
+        user=user,
+        app_id="app-1",
+        triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
+    )
+    writer.save_synchronously(_execution(execution_id="finished", node_execution_id="finished"))
+    paused = _execution(execution_id="paused", node_execution_id="paused", status=WorkflowNodeExecutionStatus.PAUSED)
+    writer.save_synchronously(paused)
+    writer.for_workflow_tool("app-1").save_synchronously(
+        paused.model_copy(update={"id": "source-paused", "node_execution_id": "source-paused"})
+    )
+    reader = repository_type(
+        sqlite_session_factory,
+        tenant_id="tenant-1",
+        user=user,
+        app_id="app-1",
+        triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
+    )
+    source_reader = reader.for_workflow_tool("app-1")
+    assert {node.id for node in reader.get_by_workflow_execution("run-1")} == {"finished"}
+    assert source_reader.get_by_workflow_execution("run-1") == []
+    assert {node.id for node in reader.get_by_workflow_execution("run-1", include_paused=True)} == {
+        "finished",
+        "paused",
+    }
+    assert {node.id for node in source_reader.get_by_workflow_execution("run-1", include_paused=True)} == {
+        "source-paused"
+    }
+    assert {node.id for node in reader.get_by_workflow_execution("run-1")} == {"finished"}
+    assert source_reader.get_by_workflow_execution("run-1") == []
 
 
 def test_trace_read_includes_only_owned_workflow_tools_without_widening_default_reads(

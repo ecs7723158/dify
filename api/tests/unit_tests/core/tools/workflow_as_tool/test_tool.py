@@ -9,7 +9,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from sqlalchemy import Engine, inspect
+from flask import Flask
+from sqlalchemy import Engine, inspect, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from core.app.entities.app_invoke_entities import InvokeFrom
@@ -23,15 +24,19 @@ from core.tools.entities.tool_entities import (
     ToolProviderType,
 )
 from core.tools.errors import ToolInvokeError
+from core.tools.tool_manager import ToolManager
 from core.tools.workflow_as_tool import tool as workflow_tool_module
 from core.tools.workflow_as_tool.tool import WorkflowTool
 from graphon.enums import BuiltinNodeTypes, WorkflowExecutionStatus
 from graphon.file import FILE_MODEL_IDENTITY, FileTransferMethod, FileType
 from models.account import Account, Tenant, TenantAccountJoin, TenantAccountRole
 from models.base import TypeBase
+from models.engine import db
 from models.enums import EndUserType
 from models.model import App, AppMode, EndUser
-from models.workflow import Workflow, WorkflowType
+from models.tools import WorkflowToolProvider
+from models.workflow import Workflow, WorkflowRun, WorkflowType
+from services.workflow_run_agg import WorkflowRunAgg
 
 TENANT_ID = "00000000-0000-0000-0000-000000000001"
 OTHER_TENANT_ID = "00000000-0000-0000-0000-000000000002"
@@ -161,6 +166,7 @@ def _build_tool(*, tenant_id: str = "test_tool", workflow_app_id: str = "app-1",
     )
     runtime = ToolRuntime(tenant_id=tenant_id, invoke_from=InvokeFrom.EXPLORE)
     return WorkflowTool(
+        execution_driver=WorkflowRunAgg.run,
         workflow_app_id=workflow_app_id,
         workflow_id="workflow-1",
         workflow_as_tool_id="wf-tool-1",
@@ -173,6 +179,72 @@ def _build_tool(*, tenant_id: str = "test_tool", workflow_app_id: str = "app-1",
 
 def _workflow_stub(*, nodes: list[dict[str, Any]] | None = None) -> SimpleNamespace:
     return SimpleNamespace(graph_dict={"nodes": nodes or []})
+
+
+def test_legacy_workflow_tool_executes_with_the_upper_owned_driver(
+    sqlite_engine: Engine, sqlite_session_factory: sessionmaker[Session], sqlite_session: Session
+) -> None:
+    tool_db = SqliteToolDb(sqlite_engine, sqlite_session_factory, sqlite_session)
+    _persist_tenant(tool_db)
+    user = _persist_end_user(tool_db)
+    app_model = _persist_app(tool_db)
+    workflow = _persist_workflow(tool_db, version="1")
+    workflow.graph = json.dumps(
+        {
+            "nodes": [
+                {"id": "start", "data": {"type": "start", "title": "Start", "variables": []}},
+                {
+                    "id": "end",
+                    "data": {
+                        "type": "end",
+                        "title": "End",
+                        "outputs": [{"variable": "caller", "value_selector": ["sys", "user_id"]}],
+                    },
+                },
+            ],
+            "edges": [{"id": "start-end", "source": "start", "target": "end"}],
+        }
+    )
+    app_model.workflow_id = workflow.id
+    provider = WorkflowToolProvider(
+        name="legacy_workflow",
+        label="Legacy workflow",
+        icon='{"background":"#222","content":"W"}',
+        app_id=app_model.id,
+        version=workflow.version,
+        user_id=CREATOR_ID,
+        tenant_id=TENANT_ID,
+        description="Workflow tool",
+        parameter_configuration="[]",
+    )
+    sqlite_session.add(provider)
+    sqlite_session.commit()
+    flask_app = Flask(__name__)
+    flask_app.config["SQLALCHEMY_DATABASE_URI"] = str(sqlite_engine.url)
+    db.init_app(flask_app)
+
+    with flask_app.app_context():
+        tool = ToolManager.get_tool_runtime(
+            provider_type=ToolProviderType.WORKFLOW,
+            provider_id=provider.id,
+            tool_name=provider.name,
+            tenant_id=TENANT_ID,
+            user_id=user.id,
+            invoke_from=InvokeFrom.SERVICE_API,
+            execution_driver=WorkflowRunAgg.run,
+        )
+        messages = list(tool.invoke(session=sqlite_session, user_id=user.id, tool_parameters={}))
+
+    assert any(
+        isinstance(message.message, ToolInvokeMessage.VariableMessage)
+        and message.message.variable_name == "caller"
+        and message.message.variable_value == user.session_id
+        for message in messages
+    )
+    run = sqlite_session.scalar(select(WorkflowRun).where(WorkflowRun.app_id == app_model.id))
+    assert run is not None
+    assert run.status == "succeeded"
+    assert run.outputs_dict == {"caller": user.session_id}
 
 
 def test_workflow_tool_should_raise_tool_invoke_error_when_result_has_error_field(

@@ -19,11 +19,9 @@ class ExecutionContextLayer(Layer):
     def enter_context(self) -> Generator[None, None, None]:
         """Create a fresh manager for a node worker or child-frame construction."""
         file_runtime = peek_workflow_file_runtime()
-        # Host context restoration can include an older file binding. Keep the
-        # engine's adapter during the body and restore it after host teardown.
-        with use_workflow_file_runtime(file_runtime), self._context:
-            with use_workflow_file_runtime(file_runtime):
-                yield
+        # Flask installs its app adapter; node execution uses the engine's adapter.
+        with self._context, use_workflow_file_runtime(file_runtime):
+            yield
 
     @override
     def node_run_context(self, node: Node, *, parent_execution_id: str | None = None) -> AbstractContextManager[None]:

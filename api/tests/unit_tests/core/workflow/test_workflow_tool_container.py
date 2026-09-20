@@ -549,7 +549,7 @@ def _container_handler(
         graph_config=workflow.graph_dict,
         features_dict=workflow.features_dict,
         environment_variables=workflow.environment_variables,
-        workflow_kind=workflow.kind_or_standard,
+        workflow_kind=workflow.resolved_kind,
     )
     payload = WorkflowToolContainerPayload(
         source_app_id=app.id,
@@ -924,7 +924,7 @@ def test_workflow_tool_failure_accounting_uses_outer_tool_policy(
         graph_config=source_graph,
         features_dict=workflow.features_dict,
         environment_variables=(),
-        workflow_kind=workflow.kind_or_standard,
+        workflow_kind=workflow.resolved_kind,
     )
     node, _, _ = _workflow_tool_node()
     node.node_data.error_strategy = tool_error_strategy
@@ -1019,7 +1019,7 @@ def test_workflow_tool_human_input_pauses_and_resumes_without_duplicate_form(
         graph_config=source_workflow.graph_dict,
         features_dict=source_workflow.features_dict,
         environment_variables=source_workflow.environment_variables,
-        workflow_kind=source_workflow.kind_or_standard,
+        workflow_kind=source_workflow.resolved_kind,
     )
     handler_factory = partial(WorkflowToolContainerHandler, source_repository=source_repository)
     form_repository = _TestFormRepository()
@@ -1052,6 +1052,7 @@ def test_workflow_tool_human_input_pauses_and_resumes_without_duplicate_form(
     initial_node, _, _ = _workflow_tool_node(initial_state, app_id="intermediate-app")
     initial_graph = _outer_graph(initial_node)
     initial_owner_factory = object.__new__(DifyNodeFactory)
+    initial_owner_factory._execution_driver = None
     initial_owner_factory._human_input_run_context = DifyNodeFactory._resolve_dify_context(
         build_test_run_context(app_id="outer-app")
     )
@@ -1099,6 +1100,7 @@ def test_workflow_tool_human_input_pauses_and_resumes_without_duplicate_form(
     restored_node, _, _ = _workflow_tool_node(restored_state, app_id="intermediate-app")
     restored_graph = _outer_graph(restored_node)
     restored_owner_factory = object.__new__(DifyNodeFactory)
+    restored_owner_factory._execution_driver = None
     restored_owner_factory._human_input_run_context = initial_owner_factory.human_input_run_context
     restored_graph.node_factory = restored_owner_factory
     assert form_repository.form is not None

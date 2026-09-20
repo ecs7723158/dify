@@ -43,6 +43,7 @@ from libs.oauth_bearer import Scope
 from models.model import AppMode
 from repositories.factory import DifyAPIRepositoryFactory
 from services.workflow_event_snapshot_service import build_workflow_event_stream
+from services.workflow_run_agg import WorkflowRunAgg
 
 
 class WorkflowEventsQuery(BaseModel):
@@ -116,9 +117,9 @@ class OpenApiWorkflowEventsApi(Resource):
             msg_generator = MessageGenerator()
             generator: BaseAppGenerator
             if app_mode == AppMode.ADVANCED_CHAT:
-                generator = AdvancedChatAppGenerator()
+                generator = AdvancedChatAppGenerator(execution_driver=WorkflowRunAgg.run)
             else:
-                generator = WorkflowAppGenerator()
+                generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
 
             include_state_snapshot = request.args.get("include_state_snapshot", "false").lower() == "true"
             continue_on_pause = request.args.get("continue_on_pause", "false").lower() == "true"

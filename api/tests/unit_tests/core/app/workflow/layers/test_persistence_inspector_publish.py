@@ -24,7 +24,7 @@ import pytest
 
 from core.app.workflow.layers import persistence as persistence_mod
 from core.app.workflow.layers.persistence import WorkflowPersistenceLayer
-from graphon.engine_events import NodeRunStartedEvent
+from graphon.engine_events import GraphRunPausedEvent, NodeRunStartedEvent
 
 
 @pytest.fixture
@@ -46,6 +46,7 @@ def layer() -> WorkflowPersistenceLayer:
     workflow_execution.error_message = None
     workflow_execution.exceptions_count = 0
     workflow_execution.finished_at = None
+    instance.set_node_run_indices({"exec-1": 1})
     instance._workflow_execution = workflow_execution
     # `runtime_state` is a layer-base property; stub it.
     instance._runtime_state = MagicMock(total_tokens=0, node_run_steps=0, outputs={}, exceptions_count=0)
@@ -106,7 +107,7 @@ def test_graph_run_aborted_publishes_workflow_completed(layer, capture_publishes
 def test_graph_run_paused_does_not_publish_completion(layer, capture_publishes):
     """Pause is not a terminal state — the Inspector keeps waiting for either
     resume or a real terminal event."""
-    layer._handle_graph_run_paused(_graph_event(outputs={}))
+    layer.on_event(GraphRunPausedEvent(outputs={}))
     assert capture_publishes["workflow"] == []
     assert capture_publishes["node"] == []
 

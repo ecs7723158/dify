@@ -196,12 +196,14 @@ class CeleryWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository):
         order_config: OrderConfig | None = None,
         *,
         include_workflow_tools: bool = False,
+        include_paused: bool = False,
     ) -> Sequence[WorkflowNodeExecution]:
         """
         Retrieve workflow node executions from cache after loading persisted history once.
 
         With include_workflow_tools, trace export reads SQL directly and requires
         a root app_id, keeping source-app nodes out of the runtime cache.
+        Resume hydration also reads SQL directly when include_paused is requested.
 
         Args:
             workflow_execution_id: The workflow execution identifier
@@ -210,10 +212,13 @@ class CeleryWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository):
         Returns:
             A sequence of WorkflowNodeExecution instances
         """
-        if include_workflow_tools:
-            # Trace reads must not populate the narrower runtime cache with source-app nodes.
+        if include_workflow_tools or include_paused:
+            # Trace and resume reads must not widen the ordinary runtime cache.
             return self._sql_repository.get_by_workflow_execution(
-                workflow_execution_id, order_config, include_workflow_tools=True
+                workflow_execution_id,
+                order_config,
+                include_workflow_tools=include_workflow_tools,
+                include_paused=include_paused,
             )
         try:
             if workflow_execution_id not in self._database_loaded_workflow_executions:

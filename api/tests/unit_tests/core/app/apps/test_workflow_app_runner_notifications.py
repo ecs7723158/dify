@@ -48,13 +48,9 @@ def test_handle_pause_event_enqueues_email_task(monkeypatch: pytest.MonkeyPatch)
         node_id="node-1",
         node_title="Review",
     )
-    monkeypatch.setattr(
-        "core.app.apps.workflow_app_runner.enrich_graph_pause_reasons",
-        lambda **_: [enriched_reason],
-    )
     monkeypatch.setattr("core.app.apps.workflow_app_runner.dispatch_human_input_email_task", email_task)
 
-    runner._handle_event(workflow_entry, event)
+    runner.handle_event(workflow_entry, event, pause_reasons=[enriched_reason])
 
     email_task.apply_async.assert_called_once()
     kwargs = email_task.apply_async.call_args.kwargs["kwargs"]

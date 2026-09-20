@@ -256,7 +256,7 @@ def test_run_pipeline_not_found():
     )
 
     with pytest.raises(ValueError):
-        runner.run()
+        runner.prepare()
 
 
 def test_run_pipeline_from_other_tenant_is_not_found(runner: PipelineRunner, sqlite_session: Session):
@@ -265,7 +265,7 @@ def test_run_pipeline_from_other_tenant_is_not_found(runner: PipelineRunner, sql
     sqlite_session.commit()
 
     with pytest.raises(ValueError, match="Pipeline not found"):
-        runner.run()
+        runner.prepare()
 
 
 @pytest.mark.parametrize(
@@ -289,7 +289,7 @@ def test_run_rejects_unowned_pipeline_dataset(
     runner.get_workflow = MagicMock()
 
     with pytest.raises(ValueError, match="Pipeline dataset not found"):
-        runner.run()
+        runner.prepare()
 
     runner.get_workflow.assert_not_called()
 
@@ -304,7 +304,7 @@ def test_run_rejects_document_outside_pipeline_dataset_after_async_boundary(
     runner.get_workflow = MagicMock()
 
     with pytest.raises(ValueError, match="Pipeline document not found"):
-        runner.run()
+        runner.prepare()
 
     runner.get_workflow.assert_not_called()
 
@@ -319,7 +319,7 @@ def test_run_rejects_original_document_outside_pipeline_dataset_after_async_boun
     runner.get_workflow = MagicMock()
 
     with pytest.raises(ValueError, match="Pipeline original document not found"):
-        runner.run()
+        runner.prepare()
 
     runner.get_workflow.assert_not_called()
 
@@ -344,7 +344,7 @@ def test_run_workflow_not_initialized(sqlite_session: Session):
         workflow_tool_source_repository=MagicMock(),
     )
     with pytest.raises(ValueError):
-        runner.run()
+        runner.prepare()
 
 
 def test_run_single_iteration_path(mocker: MockerFixture, sqlite_session: Session):
@@ -372,7 +372,6 @@ def test_run_single_iteration_path(mocker: MockerFixture, sqlite_session: Sessio
         return_value=("graph", runtime_state.variable_pool, runtime_state)
     )
     runner._update_document_status = MagicMock()
-    runner._handle_event = MagicMock()
 
     event = MagicMock()
     workflow_entry = MagicMock()
@@ -382,11 +381,12 @@ def test_run_single_iteration_path(mocker: MockerFixture, sqlite_session: Sessio
 
     mocker.patch.object(module, "WorkflowPersistenceLayer", return_value=MagicMock())
 
-    runner.run()
+    prepared = runner.prepare()
+    assert prepared is not None
+    runner.handle_event(prepared.entry, event)
 
     runner._prepare_single_node_execution.assert_called_once()
     runner._update_document_status.assert_called_once_with(event, document_ref)
-    runner._handle_event.assert_called()
 
 
 def test_run_normal_path_builds_graph(mocker: MockerFixture, sqlite_session: Session, sqlite_engine: Engine):
@@ -424,7 +424,6 @@ def test_run_normal_path_builds_graph(mocker: MockerFixture, sqlite_session: Ses
     runner._resolve_user_from = MagicMock(return_value=UserFrom.ACCOUNT)
     runner._init_rag_pipeline_graph = MagicMock(return_value="graph")
     runner._update_document_status = MagicMock()
-    runner._handle_event = MagicMock()
 
     class FakeVariablePool:
         def add(self, selector, value):
@@ -443,7 +442,9 @@ def test_run_normal_path_builds_graph(mocker: MockerFixture, sqlite_session: Ses
 
     event.listen(sqlite_engine, "checkin", record_checkin)
     try:
-        runner.run()
+        prepared = runner.prepare()
+        assert prepared is not None
+        list(prepared.entry.run())
     finally:
         event.remove(sqlite_engine, "checkin", record_checkin)
 

@@ -2,15 +2,15 @@ import json
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, NewType, TypedDict, Union
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from core.app.entities.app_invoke_entities import AdvancedChatAppGenerateEntity, InvokeFrom, WorkflowAppGenerateEntity
 from core.app.entities.queue_entities import (
+    NodeExecutionSnapshot,
     QueueAgentLogEvent,
     QueueHumanInputFormFilledEvent,
     QueueHumanInputFormTimeoutEvent,
@@ -79,8 +79,7 @@ from graphon.workflow_type_encoder import WorkflowRuntimeTypeConverter
 from libs.datetime_utils import naive_utc_now, to_utc_timestamp
 from models import Account, EndUser
 from models.human_input import HumanInputForm
-from models.workflow import WorkflowNodeExecutionTriggeredFrom, WorkflowRun
-from repositories.factory import DifyAPIRepositoryFactory
+from models.workflow import WorkflowRun
 from services.variable_truncator import BaseTruncator, DummyVariableTruncator, VariableTruncator
 
 # Maps the entry surface a workflow was invoked from to the HITL surface that
@@ -109,19 +108,6 @@ class EndUserCreatedByDict(TypedDict):
 CreatedByDict = AccountCreatedByDict | EndUserCreatedByDict
 
 
-@dataclass(slots=True)
-class _NodeSnapshot:
-    """In-memory cache for node metadata between start and completion events."""
-
-    title: str
-    index: int
-    start_at: datetime
-    iteration_id: str = ""
-    """Empty string means the node is not executing inside an iteration."""
-    loop_id: str = ""
-    """Empty string means the node is not executing inside a loop."""
-
-
 class WorkflowResponseConverter:
     _truncator: BaseTruncator
 
@@ -143,8 +129,7 @@ class WorkflowResponseConverter:
         else:
             self._truncator = VariableTruncator.default()
 
-        self._node_snapshots: dict[NodeExecutionId, _NodeSnapshot] = {}
-        self._node_sequence = 0
+        self._node_snapshots: dict[NodeExecutionId, NodeExecutionSnapshot] = {}
         self._workflow_execution_id: str | None = None
         self._workflow_started_at: datetime | None = None
 
@@ -175,16 +160,16 @@ class WorkflowResponseConverter:
     # ------------------------------------------------------------------
     # Node snapshot helpers
     # ------------------------------------------------------------------
-    def _store_snapshot(self, event: QueueNodeStartedEvent) -> _NodeSnapshot:
+    def _store_snapshot(self, event: QueueNodeStartedEvent) -> NodeExecutionSnapshot:
         # The engine may have persisted this start before resumption metadata was loaded.
         snapshot = self._get_snapshot(event.node_execution_id)
         if snapshot is not None:
             return snapshot
 
-        self._node_sequence = max(self._node_sequence + 1, event.node_run_index)
-        snapshot = _NodeSnapshot(
+        snapshot = NodeExecutionSnapshot(
+            execution_id=event.node_execution_id,
             title=event.node_title,
-            index=self._node_sequence,
+            index=event.node_run_index,
             start_at=event.start_at,
             iteration_id=event.in_iteration_id or "",
             loop_id=event.in_loop_id or "",
@@ -193,39 +178,16 @@ class WorkflowResponseConverter:
         self._node_snapshots[node_execution_id] = snapshot
         return snapshot
 
-    def _restore_node_snapshots(self, workflow_id: str, workflow_run_id: str) -> None:
-        """Restore ordering and pending node metadata before consuming resumed events."""
-        app_config = self._application_generate_entity.app_config
-        repository = DifyAPIRepositoryFactory.create_api_workflow_node_execution_repository(
-            sessionmaker(bind=db.engine, expire_on_commit=False)
-        )
-        executions = repository.get_execution_snapshots_by_workflow_run(
-            tenant_id=app_config.tenant_id,
-            app_id=app_config.app_id,
-            workflow_id=workflow_id,
-            workflow_run_id=workflow_run_id,
-            triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
-        )
-        for execution in executions:
-            self._node_snapshots[NodeExecutionId(execution.execution_id)] = _NodeSnapshot(
-                title=execution.title,
-                index=execution.index,
-                start_at=execution.created_at,
-                iteration_id=execution.iteration_id or "",
-                loop_id=execution.loop_id or "",
-            )
-            self._node_sequence = max(self._node_sequence, execution.index)
-
-    def _get_snapshot(self, node_execution_id: str) -> _NodeSnapshot | None:
+    def _get_snapshot(self, node_execution_id: str) -> NodeExecutionSnapshot | None:
         return self._node_snapshots.get(NodeExecutionId(node_execution_id))
 
-    def _pop_snapshot(self, node_execution_id: str) -> _NodeSnapshot | None:
+    def _pop_snapshot(self, node_execution_id: str) -> NodeExecutionSnapshot | None:
         return self._node_snapshots.pop(NodeExecutionId(node_execution_id), None)
 
     @staticmethod
     def _merge_metadata(
         base_metadata: Mapping[WorkflowNodeExecutionMetadataKey, Any] | None,
-        snapshot: _NodeSnapshot | None,
+        snapshot: NodeExecutionSnapshot | None,
     ) -> Mapping[WorkflowNodeExecutionMetadataKey, Any] | None:
         if not base_metadata and not snapshot:
             return base_metadata
@@ -272,12 +234,15 @@ class WorkflowResponseConverter:
         workflow_run_id: str,
         workflow_id: str,
         reason: WorkflowStartReason,
+        node_execution_snapshots: Sequence[NodeExecutionSnapshot] = (),
     ) -> WorkflowStartStreamResponse:
         run_id = self._ensure_workflow_run_id(workflow_run_id)
         started_at = naive_utc_now()
         self._workflow_started_at = started_at
         if reason == WorkflowStartReason.RESUMPTION:
-            self._restore_node_snapshots(workflow_id, run_id)
+            self._node_snapshots.update(
+                (NodeExecutionId(snapshot.execution_id), snapshot) for snapshot in node_execution_snapshots
+            )
 
         return WorkflowStartStreamResponse(
             task_id=task_id,

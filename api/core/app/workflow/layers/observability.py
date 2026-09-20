@@ -43,6 +43,10 @@ class ObservabilityLayer(Layer):
     - Creates a span when a node starts execution
     - Establishes OTel context so automatic instrumentation associates with the span
     - Sets complete attributes and status when node execution ends
+
+    Node spans survive worker handoffs within one engine attempt only. A
+    persisted pause ends them; the restored engine creates new spans without
+    restoring this layer's previous node-to-span mapping or parent span contexts.
     """
 
     def __init__(self) -> None:
@@ -79,11 +83,6 @@ class ObservabilityLayer(Layer):
         return self._parsers.get(node.node_type, self._default_parser)
 
     @override
-    def on_graph_start(self) -> None:
-        """Called when graph execution starts."""
-        self.on_graph_end(None)
-
-    @override
     @contextmanager
     def node_run_context(self, node: Node, *, parent_execution_id: str | None = None) -> Generator[None, None, None]:
         """Activate a retained span only for this worker's execution segment.
@@ -91,9 +90,13 @@ class ObservabilityLayer(Layer):
         Container spans outlive worker activations. Context tokens must not:
         suspension and final resume can execute in different contexts/threads.
         """
+        if self._is_disabled or self._tracer is None:
+            yield
+            return
+
         token: Token[context_api.Context] | None = None
         try:
-            if not self._is_disabled and self._tracer and (execution_id := node.execution_id):
+            if execution_id := node.execution_id:
                 span = self._node_spans.get(execution_id)
                 if span is None:
                     parent_context = context_api.get_current()

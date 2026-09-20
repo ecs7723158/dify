@@ -1038,7 +1038,7 @@ def test_resume_advanced_chat_publishes_events_for_originally_blocking_runs(
     generator_instance.resume.return_value = response_stream
     monkeypatch.setattr(
         "tasks.app_generate.workflow_execute_task.AdvancedChatAppGenerator",
-        lambda: generator_instance,
+        lambda *, execution_driver: generator_instance,
     )
 
     publish_streaming_response = MagicMock()
@@ -1094,7 +1094,7 @@ def test_resume_workflow_publishes_events_for_originally_blocking_runs(
     generator_instance.resume.return_value = response_stream
     monkeypatch.setattr(
         "tasks.app_generate.workflow_execute_task.WorkflowAppGenerator",
-        lambda: generator_instance,
+        lambda *, execution_driver: generator_instance,
     )
 
     publish_streaming_response = MagicMock()
@@ -1152,7 +1152,7 @@ def test_resume_workflow_ignores_missing_old_pause_after_repause(
     generator_instance.resume.return_value = response_stream
     monkeypatch.setattr(
         "tasks.app_generate.workflow_execute_task.WorkflowAppGenerator",
-        lambda: generator_instance,
+        lambda *, execution_driver: generator_instance,
     )
 
     publish_streaming_response = MagicMock()

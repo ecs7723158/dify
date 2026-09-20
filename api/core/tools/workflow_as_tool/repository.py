@@ -2,6 +2,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from enums import WorkflowKind
 from graphon.variables import VariableBase
 
 
@@ -14,7 +15,7 @@ class WorkflowToolSource:
     graph_config: Mapping[str, Any]
     features_dict: Mapping[str, Any]
     environment_variables: Sequence[VariableBase]
-    workflow_kind: str
+    workflow_kind: WorkflowKind
 
 
 class WorkflowToolSourceRepository(Protocol):

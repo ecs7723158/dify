@@ -14,6 +14,7 @@ from core.app.workflow.file_runtime import create_dify_workflow_file_runtime, in
 from core.tools.workflow_as_tool.repository import WorkflowToolSource, WorkflowToolSourceRepository
 from core.workflow.workflow_tool_container_handler import WorkflowToolContainerHandler
 from dify_app import DifyApp
+from enums import WorkflowKind
 from graphon.engine import Engine
 from graphon.engine.layer import Layer
 from graphon.engine_events import GraphRunSucceededEvent
@@ -66,7 +67,7 @@ def test_host_context_preserves_each_engine_file_runtime(monkeypatch: pytest.Mon
                 graph_config=source_workflow.graph_dict,
                 features_dict={},
                 environment_variables=[],
-                workflow_kind="standard",
+                workflow_kind=WorkflowKind.STANDARD,
             )
 
         repository = MagicMock(spec=WorkflowToolSourceRepository)

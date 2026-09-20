@@ -1,6 +1,6 @@
 import uuid
 from collections.abc import Generator, Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -27,6 +27,9 @@ from models.model import (
 )
 from models.workflow import Workflow
 from services.end_user_service import EndUserService
+
+if TYPE_CHECKING:
+    from core.app.apps.workflow_app_runner import WorkflowRunDriver
 
 
 class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
@@ -70,6 +73,7 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
         inputs: Mapping,
         files: list[dict],
         session: Session,
+        execution_driver: "WorkflowRunDriver",
     ) -> Generator[Mapping | str, None, None] | Mapping:
         """
         invoke app
@@ -91,12 +95,14 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
                 if not query:
                     raise ValueError("missing query")
 
-                return cls.invoke_chat_app(app, user, conversation_id, query, stream, inputs, files, session)
+                return cls.invoke_chat_app(
+                    app, user, conversation_id, query, stream, inputs, files, session, execution_driver
+                )
             case AppMode.WORKFLOW:
                 workflow = cls._get_workflow(app)
                 if not workflow:
                     raise ValueError("unexpected app type")
-                return cls.invoke_workflow_app(app, workflow, user, stream, inputs, files)
+                return cls.invoke_workflow_app(app, workflow, user, stream, inputs, files, execution_driver)
             case AppMode.COMPLETION:
                 return cls.invoke_completion_app(app, user, stream, inputs, files, session)
             case _:
@@ -113,6 +119,7 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
         inputs: Mapping,
         files: list[dict],
         session: Session,
+        execution_driver: "WorkflowRunDriver",
     ) -> Generator[Mapping | str, None, None] | Mapping:
         """
         invoke chat app
@@ -128,7 +135,7 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
                     state_owner_user_id=workflow.created_by,
                 )
 
-                return AdvancedChatAppGenerator().generate(
+                return AdvancedChatAppGenerator(execution_driver=execution_driver).generate(
                     app_model=app,
                     workflow=workflow,
                     user=user,
@@ -145,7 +152,7 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
                     session=session,
                 )
             case AppMode.AGENT_CHAT:
-                return AgentChatAppGenerator().generate(
+                return AgentChatAppGenerator(execution_driver=execution_driver).generate(
                     app_model=app,
                     user=user,
                     args={
@@ -184,6 +191,7 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
         stream: bool,
         inputs: Mapping,
         files: list[dict],
+        execution_driver: "WorkflowRunDriver",
     ) -> Generator[Mapping | str, None, None] | Mapping:
         """
         invoke workflow app
@@ -193,7 +201,7 @@ class PluginAppBackwardsInvocation(BaseBackwardsInvocation):
             state_owner_user_id=workflow.created_by,
         )
 
-        return WorkflowAppGenerator().generate(
+        return WorkflowAppGenerator(execution_driver=execution_driver).generate(
             app_model=app,
             workflow=workflow,
             user=user,

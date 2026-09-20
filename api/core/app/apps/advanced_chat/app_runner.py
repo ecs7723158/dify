@@ -1,7 +1,7 @@
 import logging
 import time
 from collections.abc import Mapping, Sequence
-from typing import Any, cast
+from typing import Any, cast, override
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ from core.app.apps.workflow.command_channels import (
     StopFlagCommandChannel,
 )
 from core.app.apps.workflow.stop_aware_ready_queue import attach_stop_aware_ready_queue
-from core.app.apps.workflow_app_runner import WorkflowBasedAppRunner
+from core.app.apps.workflow_app_runner import PreparedWorkflowRun, WorkflowBasedAppRunner, WorkflowRunDriver
 from core.app.entities.app_invoke_entities import (
     AdvancedChatAppGenerateEntity,
     AppGenerateEntity,
@@ -45,7 +45,6 @@ from core.workflow.system_variables import (
 from core.workflow.variable_pool_initializer import add_node_inputs_to_pool, add_variables_to_pool
 from core.workflow.workflow_entry import WorkflowEntry
 from extensions.ext_redis import redis_client
-from extensions.otel import WorkflowAppRunnerHandler, trace_span
 from extensions.workflow_warm_shutdown import WORKFLOW_WARM_SHUTDOWN_ABORT_REASON, celery_warm_shutdown_started
 from graphon.engine.command import RedisChannel
 from graphon.engine.filter import ResponseStreamFilter
@@ -79,6 +78,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         workflow: Workflow,
         system_user_id: str,
         app: App,
+        execution_driver: WorkflowRunDriver | None = None,
         workflow_execution_repository: WorkflowExecutionRepository,
         workflow_node_execution_repository: WorkflowNodeExecutionRepository,
         workflow_tool_source_repository: WorkflowToolSourceRepository,
@@ -88,6 +88,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
     ):
         super().__init__(
             queue_manager=queue_manager,
+            execution_driver=execution_driver,
             variable_loader=variable_loader,
             app_id=application_generate_entity.app_config.app_id,
             graph_engine_layers=graph_engine_layers,
@@ -105,8 +106,8 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         self._resume_graph_runtime_state = graph_runtime_state
         self._response_stream_filter = response_stream_filter
 
-    @trace_span(WorkflowAppRunnerHandler)
-    def run(self):
+    @override
+    def prepare(self) -> PreparedWorkflowRun | None:
         app_config = self.application_generate_entity.app_config
         app_config = cast(AdvancedChatAppConfig, app_config)
 
@@ -172,7 +173,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
                 message_id=self.message.id,
             )
             if stop:
-                return
+                return None
 
             self.application_generate_entity.inputs = new_inputs
             self.application_generate_entity.query = new_query
@@ -197,7 +198,7 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
                     text=annotation_reply.content,
                     stopped_by=QueueStopEvent.StopBy.ANNOTATION_REPLY,
                 )
-                return
+                return None
 
             # Initialize conversation variables
             conversation_variables = self._initialize_conversation_variables()
@@ -305,8 +306,13 @@ class AdvancedChatAppRunner(WorkflowBasedAppRunner):
         for layer in self._graph_engine_layers:
             workflow_entry.graph_engine.add_layer(layer)
 
-        for event in self._run_workflow(workflow_entry):
-            self._handle_event(workflow_entry, event)
+        return PreparedWorkflowRun(
+            entry=workflow_entry,
+            persistence_layer=persistence_layer,
+            generate_entity=self.application_generate_entity,
+            workflow_execution_repository=self._workflow_execution_repository,
+            workflow_node_execution_repository=self._workflow_node_execution_repository,
+        )
 
     def handle_input_moderation(
         self,

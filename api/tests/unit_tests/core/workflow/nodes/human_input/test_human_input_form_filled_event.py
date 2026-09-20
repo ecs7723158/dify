@@ -389,7 +389,7 @@ def _publish_graph_events(events: Iterable[EngineEvent], *, runtime_state: Runti
     workflow_entry.graph_engine = SimpleNamespace(runtime_state=runtime_state)
 
     for event in events:
-        runner._handle_event(workflow_entry, event)
+        runner.handle_event(workflow_entry, event)
 
     return published
 
@@ -449,7 +449,6 @@ def _sse_payloads(
         app.test_request_context(),
         patch.object(pipeline, "_database_session", return_value=nullcontext(session)),
         patch.object(pipeline, "_get_message", return_value=Message(id="message-1", status=MessageStatus.PAUSED)),
-        patch.object(pipeline._workflow_response_converter, "_restore_node_snapshots"),
     ):
         if not any(isinstance(event, QueueWorkflowStartedEvent) for event in events):
             list(

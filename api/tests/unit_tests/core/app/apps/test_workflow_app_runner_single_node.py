@@ -105,7 +105,7 @@ def test_run_uses_single_node_execution_branch(
         ) as prepare_single,
         patch.object(runner, "_init_graph") as init_graph,
     ):
-        runner.run()
+        runner.prepare()
 
     prepare_single.assert_called_once_with(
         workflow=workflow,
@@ -265,7 +265,7 @@ def test_run_adds_inputs_with_snippet_compatible_start_aliases() -> None:
         patch("core.app.apps.workflow.app_runner.add_node_inputs_to_pool") as add_inputs,
         patch.object(runner, "_init_graph", return_value=MagicMock()) as init_graph,
     ):
-        runner.run()
+        runner.prepare()
 
     aliases.assert_called_once_with(workflow_kind="snippet", root_node_id="root-node")
     add_inputs.assert_called_once()

@@ -45,5 +45,5 @@ class SQLAlchemyWorkflowToolSourceRepository(WorkflowToolSourceRepository):
                 graph_config=workflow.graph_dict,
                 features_dict=workflow.features_dict,
                 environment_variables=tuple(workflow.environment_variables),
-                workflow_kind=workflow.kind_or_standard,
+                workflow_kind=workflow.resolved_kind,
             )

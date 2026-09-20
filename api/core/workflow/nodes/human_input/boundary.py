@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 
-from core.repositories.human_input_repository import HumanInputFormSubmissionRepository
+from core.repositories.human_input_repository import HumanInputFormRecord, HumanInputFormSubmissionRepository
 from core.workflow.human_input_policy import resolve_variable_select_input_options
 from core.workflow.system_variables import SystemVariableKey, get_system_text
 from graphon.engine.filter import EngineEventFilterContext
@@ -138,6 +138,14 @@ def _enrich_hitl_required(
             f"missing human input form while enriching pause reason: form_id={form_id}, session_id={reason.session_id}"
         )
 
+    return build_human_input_pause_reason(reason=reason, record=record, variable_pool=variable_pool)
+
+
+def build_human_input_pause_reason(
+    *, reason: HitlRequired, record: HumanInputFormRecord, variable_pool: ReadOnlyVariablePool | None
+) -> HumanInputRequired:
+    """Format a materialized form without reading its repository."""
+    form_id = record.form_id
     definition = record.definition
     return HumanInputRequired(
         form_id=record.form_id,

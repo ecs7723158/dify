@@ -22,6 +22,7 @@ from core.tools.workflow_as_tool.repository import WorkflowToolSource, WorkflowT
 from core.workflow.workflow_entry import WorkflowEntry
 from core.workflow.workflow_tool_container_handler import WorkflowToolContainerHandler
 from dify_app import DifyApp
+from enums import WorkflowKind
 from graphon.engine import Engine
 from graphon.engine.layer import Layer
 from graphon.engine_events import GraphRunSucceededEvent, NodeEvent
@@ -109,7 +110,7 @@ def test_workflow_tool_tracing_survives_worker_handoff(
             graph_config=workflow.graph_dict,
             features_dict={},
             environment_variables=[],
-            workflow_kind="standard",
+            workflow_kind=WorkflowKind.STANDARD,
         )
         engine = Engine(
             graph=_outer_graph(tool),

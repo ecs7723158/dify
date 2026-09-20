@@ -24,6 +24,7 @@ from core.workflow.workflow_tool_container_handler import (
     WorkflowToolContainerHandler,
     WorkflowToolNestedContainerHandler,
 )
+from enums import WorkflowKind
 from graphon.engine import Engine
 from graphon.engine.command import InMemoryChannel
 from graphon.engine.container_handler.builtin.loop import LoopContainerHandler
@@ -47,6 +48,7 @@ from models import Account, WorkflowRun
 from models.enums import WorkflowRunTriggeredFrom
 from models.human_input import HumanInputForm
 from models.workflow import WorkflowNodeExecutionModel, WorkflowNodeExecutionTriggeredFrom
+from services.workflow_run_index import WorkflowRunIndex
 from tests.unit_tests.core.workflow.nodes.agent_v2.test_agent_node import FakeBindingResolver, FakeSessionStore
 from tests.unit_tests.core.workflow.test_workflow_tool_container import (
     _container_handler,
@@ -64,7 +66,7 @@ def test_workflow_tool_loop_break_does_not_escape_into_enclosing_loop(monkeypatc
         return {"id": f"{source}-{target}", "source": source, "target": target, "sourceHandle": handle}
 
     tool_node, runtime, _ = _workflow_tool_node()
-    monkeypatch.setattr("core.workflow.node_factory.DifyToolNodeRuntime", lambda _: runtime)
+    monkeypatch.setattr("core.workflow.node_factory.DifyToolNodeRuntime", lambda _, **_kwargs: runtime)
     outer_graph = {
         "nodes": [
             node("start", "start", variables=[]),
@@ -244,7 +246,7 @@ def test_workflow_tool_delivers_source_events_to_persistence_without_exposing_th
         },
         features_dict={},
         environment_variables=[],
-        workflow_kind="standard",
+        workflow_kind=WorkflowKind.STANDARD,
     )
     repository = MagicMock(spec=WorkflowToolSourceRepository)
     repository.get_source.return_value = source
@@ -339,7 +341,7 @@ def test_workflow_tool_agent_finds_its_persisted_caller_before_resolving_binding
         },
         features_dict={},
         environment_variables=[],
-        workflow_kind="standard",
+        workflow_kind=WorkflowKind.STANDARD,
     )
     source_repository = MagicMock(spec=WorkflowToolSourceRepository)
     source_repository.get_source.return_value = source
@@ -376,6 +378,9 @@ def test_workflow_tool_agent_finds_its_persisted_caller_before_resolving_binding
             triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
         ),
     )
+    index = WorkflowRunIndex()
+    index.seed_source(source.app_id, source.workflow_id, ())
+    layer.set_node_run_indices(index.indices)
     node.runtime_state.variable_pool.add(("sys", "workflow_run_id"), "outer-run")
     engine = Engine(
         graph=_outer_graph(node),
@@ -390,6 +395,7 @@ def test_workflow_tool_agent_finds_its_persisted_caller_before_resolving_binding
             ),
         ),
     )
+    engine.add_layer(index)
     engine.add_layer(layer)
 
     events = list(engine.run())
@@ -450,7 +456,7 @@ def test_workflow_tool_agent_ask_human_preserves_invocation_identity_after_runti
         },
         features_dict={},
         environment_variables=[],
-        workflow_kind="standard",
+        workflow_kind=WorkflowKind.STANDARD,
     )
     handler_factory = partial(WorkflowToolContainerHandler, source_repository=source_repository)
     invocation_ids: set[str] = set()

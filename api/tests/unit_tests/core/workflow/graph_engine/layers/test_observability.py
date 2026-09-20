@@ -21,11 +21,38 @@ from core.app.workflow.layers.observability import ObservabilityLayer
 from extensions.otel.semconv import DifySpanAttributes
 from graphon.engine_events import GraphRunAbortedEvent
 from graphon.enums import BuiltinNodeTypes
+from graphon.nodes.start import StartNode
+from graphon.nodes.start.entities import StartNodeData
+from graphon.runtime import RuntimeState, VariablePool
+from tests.workflow_test_utils import build_test_graph_init_params
 
 
 @pytest.fixture(autouse=True)
 def _otel_config(config_overrides) -> None:
     config_overrides(ENABLE_OTEL=True)
+
+
+@pytest.mark.parametrize("tracing_enabled", [False, True])
+def test_unbound_node_still_runs_and_preserves_body_errors(config_overrides, tracing_enabled):
+    config_overrides(ENABLE_OTEL=tracing_enabled)
+    node = StartNode(
+        node_id="start",
+        data=StartNodeData(title="Start", variables=[]),
+        init_params=build_test_graph_init_params(),
+        runtime_state=RuntimeState(workflow_id="workflow", variable_pool=VariablePool(), start_at=0),
+    )
+    layer = ObservabilityLayer()
+    parent = get_current_span()
+    executed = []
+
+    with layer.node_run_context(node):
+        executed.append("completed")
+
+    with pytest.raises(ValueError, match="node failed"), layer.node_run_context(node):
+        raise ValueError("node failed")
+
+    assert executed == ["completed"]
+    assert get_current_span() is parent
 
 
 class TestObservabilityLayerInitialization:
@@ -292,26 +319,6 @@ class TestObservabilityLayerParserIntegration:
 
 class TestObservabilityLayerGraphLifecycle:
     """Test graph lifecycle management."""
-
-    @pytest.mark.usefixtures("mock_is_instrument_flag_enabled_false")
-    def test_on_graph_start_ends_leftover_spans(
-        self, tracer_provider_with_memory_exporter, memory_span_exporter, mock_llm_node
-    ):
-        """A new graph attempt must not leak or reuse an unfinished span."""
-        layer = ObservabilityLayer()
-        layer.on_graph_start()
-
-        with layer.node_run_context(mock_llm_node):
-            first_span = get_current_span()
-
-        layer.on_graph_start()
-        assert not first_span.is_recording()
-
-        with layer.node_run_context(mock_llm_node):
-            assert get_current_span() is not first_span
-            layer.on_node_run_end(mock_llm_node, None)
-
-        assert len(memory_span_exporter.get_finished_spans()) == 2
 
     @pytest.mark.usefixtures("mock_is_instrument_flag_enabled_false")
     def test_on_graph_end_with_no_unfinished_spans(

@@ -435,7 +435,7 @@ def test_workflow_events_snapshot_can_continue_across_pauses(
     )
     monkeypatch.setattr(
         "controllers.console.human_input_form.WorkflowAppGenerator",
-        lambda: workflow_generator,
+        lambda *, execution_driver: workflow_generator,
     )
     monkeypatch.setattr(
         "controllers.console.human_input_form.build_workflow_event_stream",

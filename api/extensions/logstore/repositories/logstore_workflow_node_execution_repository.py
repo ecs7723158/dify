@@ -338,6 +338,7 @@ class LogstoreWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository):
         order_config: OrderConfig | None = None,
         *,
         include_workflow_tools: bool = False,
+        include_paused: bool = False,
     ) -> Sequence[WorkflowNodeExecution]:
         """
         Retrieve all node executions for a workflow execution.
@@ -345,6 +346,8 @@ class LogstoreWorkflowNodeExecutionRepository(WorkflowNodeExecutionRepository):
         This ensures we only get the most recent version of each node execution record.
         With include_workflow_tools, also include source-app nodes carrying this
         repository's root-app ownership marker; this requires app_id.
+        LogStore already includes paused nodes by default; include_paused is
+        accepted for the shared resume-read contract without changing that behavior.
         Args:
             workflow_execution_id: The workflow execution identifier
             order_config: Optional configuration for ordering results

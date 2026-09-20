@@ -283,12 +283,24 @@ class QueueAdvancedChatMessageEndEvent(AppQueueEvent):
     event: QueueEvent = QueueEvent.ADVANCED_CHAT_MESSAGE_END
 
 
+class NodeExecutionSnapshot(BaseModel):
+    """Materialized node metadata supplied by the run owner when resuming streaming."""
+
+    execution_id: str
+    title: str
+    index: int
+    start_at: datetime
+    iteration_id: str = ""
+    loop_id: str = ""
+
+
 class QueueWorkflowStartedEvent(AppQueueEvent):
     """QueueWorkflowStartedEvent entity."""
 
     event: QueueEvent = QueueEvent.WORKFLOW_STARTED
     # Always present; mirrors GraphRunStartedEvent.reason for downstream consumers.
     reason: WorkflowStartReason = WorkflowStartReason.INITIAL
+    node_execution_snapshots: tuple[NodeExecutionSnapshot, ...] = ()
 
 
 class QueueWorkflowSucceededEvent(AppQueueEvent):
@@ -331,7 +343,7 @@ class QueueNodeStartedEvent(AppQueueEvent):
     node_id: str
     node_title: str
     node_type: NodeType
-    node_run_index: int = 1  # FIXME(-LAN-): may not used
+    node_run_index: int = 1
     in_iteration_id: str | None = None
     in_loop_id: str | None = None
     start_at: datetime

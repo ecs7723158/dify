@@ -36,6 +36,7 @@ from models.enums import CreatorUserRole, WorkflowRunTriggeredFrom
 from models.model import App, AppMode, Conversation, EndUser, Message
 from models.workflow import Workflow, WorkflowNodeExecutionTriggeredFrom, WorkflowRun
 from repositories.factory import DifyAPIRepositoryFactory
+from services.workflow_run_agg import WorkflowRunAgg
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,7 @@ class _AppRunner:
     ):
         exec_params = self._exec_params
         if exec_params.app_mode == AppMode.ADVANCED_CHAT:
-            return AdvancedChatAppGenerator().generate(
+            return AdvancedChatAppGenerator(execution_driver=WorkflowRunAgg.run).generate(
                 app_model=app,
                 workflow=workflow,
                 user=user,
@@ -223,7 +224,7 @@ class _AppRunner:
                 session=session,
             )
         if exec_params.app_mode == AppMode.WORKFLOW:
-            return WorkflowAppGenerator().generate(
+            return WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run).generate(
                 app_model=app,
                 workflow=workflow,
                 user=user,
@@ -647,7 +648,7 @@ def _resume_advanced_chat(
         triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
     )
 
-    generator = AdvancedChatAppGenerator()
+    generator = AdvancedChatAppGenerator(execution_driver=WorkflowRunAgg.run)
 
     try:
         response = generator.resume(
@@ -716,7 +717,7 @@ def _resume_workflow(
         triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
     )
 
-    generator = WorkflowAppGenerator()
+    generator = WorkflowAppGenerator(execution_driver=WorkflowRunAgg.run)
 
     try:
         response = generator.resume(

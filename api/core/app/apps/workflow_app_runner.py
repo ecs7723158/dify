@@ -1,15 +1,23 @@
 import logging
 import time
-from collections.abc import Generator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from core.app.apps.base_app_queue_manager import AppQueueManager, PublishFrom
 from core.app.entities.agent_strategy import AgentStrategyInfo
-from core.app.entities.app_invoke_entities import InvokeFrom, UserFrom, build_dify_run_context
+from core.app.entities.app_invoke_entities import (
+    AdvancedChatAppGenerateEntity,
+    InvokeFrom,
+    UserFrom,
+    WorkflowAppGenerateEntity,
+    build_dify_run_context,
+)
 from core.app.entities.queue_entities import (
     AppQueueEvent,
+    NodeExecutionSnapshot,
     QueueAgentLogEvent,
     QueueHumanInputFormFilledEvent,
     QueueHumanInputFormTimeoutEvent,
@@ -34,29 +42,27 @@ from core.app.entities.queue_entities import (
     QueueWorkflowStartedEvent,
     QueueWorkflowSucceededEvent,
 )
-from core.app.layers.pause_state_persist_layer import PauseStatePersistenceLayer
+from core.app.layers.pause_state_persist_layer import PauseStateLayerConfig
+from core.app.workflow.layers.persistence import WorkflowPersistenceLayer
 from core.credit_usage import CreditUsageAppType
 from core.rag.entities import RetrievalSourceMetadata
-from core.repositories.human_input_repository import HumanInputFormSubmissionRepository
+from core.repositories.factory import WorkflowExecutionRepository, WorkflowNodeExecutionRepository
+from core.repositories.human_input_repository import HumanInputFormRecord
 from core.workflow.node_factory import (
     DifyGraphInitContext,
     DifyNodeFactory,
     get_default_root_node_id,
     resolve_workflow_node_class,
 )
-from core.workflow.node_runtime import DifyHumanInputNodeRuntime, resolve_dify_run_context
 from core.workflow.nodes.agent.events import NodeRunAgentLogEvent
-from core.workflow.nodes.human_input.boundary import enrich_graph_pause_reasons, resolve_human_input_node_id
+from core.workflow.nodes.human_input.boundary import resolve_human_input_node_id
 from core.workflow.nodes.human_input.callback import DifyHITLCallback
 from core.workflow.nodes.human_input.enums import HumanInputFormStatus
-from core.workflow.nodes.human_input.pause_reason import HumanInputRequired
-from core.workflow.nodes.human_input.session_binding import default_session_binding
+from core.workflow.nodes.human_input.pause_reason import HumanInputRequired, PauseReason
 from core.workflow.system_variables import (
-    SystemVariableKey,
     build_bootstrap_variables,
     default_system_variables,
     get_node_creation_preload_selectors,
-    get_system_text,
     inject_default_system_variable_mappings,
     preload_node_creation_variables,
 )
@@ -168,6 +174,28 @@ class _WorkflowGraphConfig(BaseModel):
         return self.model_dump(mode="python", exclude_unset=True)
 
 
+def _merge_container_metadata(
+    lifecycle_metadata: Mapping[str, Any], node_metadata: Mapping[str, Any]
+) -> dict[str, Any]:
+    # Keep lifecycle details and ancestor ownership together, preserving the
+    # existing node-result precedence when both sources contain the same key.
+    return {**lifecycle_metadata, **node_metadata}
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedWorkflowRun:
+    """Execution dependencies handed from graph preparation to orchestration."""
+
+    entry: WorkflowEntry
+    persistence_layer: WorkflowPersistenceLayer
+    generate_entity: AdvancedChatAppGenerateEntity | WorkflowAppGenerateEntity
+    workflow_execution_repository: WorkflowExecutionRepository
+    workflow_node_execution_repository: WorkflowNodeExecutionRepository
+
+
+type WorkflowRunDriver = Callable[[WorkflowBasedAppRunner, PauseStateLayerConfig | None], None]
+
+
 class WorkflowBasedAppRunner:
     def __init__(
         self,
@@ -176,11 +204,16 @@ class WorkflowBasedAppRunner:
         variable_loader: VariableLoader = DUMMY_VARIABLE_LOADER,
         app_id: str,
         graph_engine_layers: Sequence[Layer] = (),
+        execution_driver: WorkflowRunDriver | None = None,
     ):
         self._queue_manager = queue_manager
         self._variable_loader = variable_loader
         self._app_id = app_id
         self._graph_engine_layers = graph_engine_layers
+        self._execution_driver = execution_driver
+
+    def prepare(self) -> PreparedWorkflowRun | None:
+        raise NotImplementedError
 
     @staticmethod
     def _resolve_user_from(invoke_from: InvokeFrom) -> UserFrom:
@@ -218,6 +251,7 @@ class WorkflowBasedAppRunner:
             trace_session_id=trace_session_id,
         )
         graph_init_context = DifyGraphInitContext(
+            execution_driver=self._execution_driver,
             workflow_id=workflow_id,
             graph_config=graph_config,
             run_context=run_context,
@@ -390,6 +424,7 @@ class WorkflowBasedAppRunner:
             trace_session_id=trace_session_id,
         )
         graph_init_context = DifyGraphInitContext(
+            execution_driver=self._execution_driver,
             workflow_id=workflow.id,
             graph_config=graph_config,
             run_context=run_context,
@@ -484,62 +519,19 @@ class WorkflowBasedAppRunner:
             logger.warning("Invalid agent strategy payload for node %s", event.node_id, exc_info=True)
             return None
 
-    def _run_workflow(self, workflow_entry: WorkflowEntry) -> Generator[EngineEvent, None, None]:
-        # Engine.run clears pause reasons during resume. Form completion belongs
-        # to this response boundary, including forms inside hidden Tool frames.
-        pause_reasons = tuple(workflow_entry.graph_engine.runtime_state.graph_execution.pause_reasons)
-        published_form_ids: set[str] = set()
-        pause_state_layer = next(
-            (layer for layer in self._graph_engine_layers if isinstance(layer, PauseStatePersistenceLayer)), None
-        )
-        for event in workflow_entry.run(pause_state_layer=pause_state_layer):
-            if isinstance(event, NodeRunHumanInputFormFilledEvent | NodeRunHumanInputFormTimeoutEvent):
-                if event.id in published_form_ids:
-                    continue
-                published_form_ids.add(event.id)
-            if isinstance(
-                event,
-                GraphRunPausedEvent
-                | GraphRunSucceededEvent
-                | GraphRunPartialSucceededEvent
-                | GraphRunFailedEvent
-                | GraphRunAbortedEvent,
-            ):
-                # Another form may complete while this resumed attempt runs.
-                # Flush it before the terminal event closes the response stream.
-                self._publish_human_input_results(workflow_entry, pause_reasons, published_form_ids)
-            yield event
-            if isinstance(event, GraphRunStartedEvent):
-                self._publish_human_input_results(workflow_entry, pause_reasons, published_form_ids)
-
-    def _publish_human_input_results(
-        self, workflow_entry: WorkflowEntry, pause_reasons: Sequence[object], published_form_ids: set[str]
+    def publish_human_input_results(
+        self,
+        workflow_entry: WorkflowEntry,
+        pending_forms: Mapping[str, HitlRequired],
+        forms: Mapping[str, HumanInputFormRecord],
+        published_form_ids: set[str],
     ) -> None:
-        pending_forms = {
-            default_session_binding.resolve_form_id_from_session_id(session_id=reason.session_id): reason
-            for reason in pause_reasons
-            if isinstance(reason, HitlRequired)
-        }
-        if not pending_forms:
-            return
-
-        engine = workflow_entry.graph_engine
-        variable_pool = engine.runtime_state.variable_pool
-        run_context = resolve_dify_run_context(engine.graph.root_node.run_context)
-        run_id = get_system_text(variable_pool, SystemVariableKey.WORKFLOW_EXECUTION_ID)
-        repository = HumanInputFormSubmissionRepository()
+        """Publish materialized completions supplied by run orchestration."""
+        variable_pool = workflow_entry.graph_engine.runtime_state.variable_pool
         for form_id, reason in pending_forms.items():
             if form_id in published_form_ids:
                 continue
-            form = repository.get_by_form_id(form_id)
-            if form is None:
-                raise ValueError(f"Human input form not found: {form_id}")
-            if not run_id or (form.tenant_id, form.app_id, form.workflow_run_id) != (
-                run_context.tenant_id,
-                self._app_id,
-                run_id,
-            ):
-                raise ValueError(f"Human input form does not belong to this workflow run: {form_id}")
+            form = forms[form_id]
             node_id = resolve_human_input_node_id(node_id=reason.node_id, form_id=form_id, variable_pool=variable_pool)
             node_title = reason.node_title or form.definition.node_title or form.node_id
             if form.status == HumanInputFormStatus.TIMEOUT:
@@ -559,10 +551,7 @@ class WorkflowBasedAppRunner:
                 )
                 if action is None:
                     raise ValueError(f"Submitted human input form has no matching action: {form_id}")
-                restored_data = DifyHumanInputNodeRuntime(run_context).restore_submitted_data(
-                    inputs=form.definition.inputs, submitted_data=form.submitted_data or {}
-                )
-                submitted_data = {name: build_segment(value) for name, value in restored_data.items()}
+                submitted_data = {name: build_segment(value) for name, value in (form.submitted_data or {}).items()}
                 self._publish_event(
                     QueueHumanInputFormFilledEvent(
                         form_id=form_id,
@@ -582,7 +571,15 @@ class WorkflowBasedAppRunner:
                 )
                 published_form_ids.add(form_id)
 
-    def _handle_event(self, workflow_entry: WorkflowEntry, event: EngineEvent):
+    def handle_event(
+        self,
+        workflow_entry: WorkflowEntry,
+        event: EngineEvent,
+        *,
+        node_run_index: int = 1,
+        node_execution_snapshots: tuple[NodeExecutionSnapshot, ...] = (),
+        pause_reasons: Sequence[PauseReason] = (),
+    ) -> None:
         """
         Handle event
         :param workflow_entry: workflow entry
@@ -628,7 +625,9 @@ class WorkflowBasedAppRunner:
                     )
                 )
             case GraphRunStartedEvent():
-                self._publish_event(QueueWorkflowStartedEvent(reason=event.reason))
+                self._publish_event(
+                    QueueWorkflowStartedEvent(reason=event.reason, node_execution_snapshots=node_execution_snapshots)
+                )
             case GraphRunSucceededEvent():
                 self._publish_event(QueueWorkflowSucceededEvent(outputs=event.outputs))
             case GraphRunPartialSucceededEvent():
@@ -647,21 +646,13 @@ class WorkflowBasedAppRunner:
                     )
                 )
             case GraphRunPausedEvent():
-                runtime_state = workflow_entry.graph_engine.runtime_state
-                enriched_reasons = enrich_graph_pause_reasons(
-                    reasons=event.reasons,
-                    form_repository=HumanInputFormSubmissionRepository(),
-                    variable_pool=runtime_state.variable_pool,
-                )
                 paused_nodes = list(
-                    dict.fromkeys(
-                        reason.node_id for reason in enriched_reasons if isinstance(reason, HumanInputRequired)
-                    )
+                    dict.fromkeys(reason.node_id for reason in pause_reasons if isinstance(reason, HumanInputRequired))
                 )
-                self._enqueue_human_input_notifications(enriched_reasons)
+                self._enqueue_human_input_notifications(pause_reasons)
                 self._publish_event(
                     QueueWorkflowPausedEvent(
-                        reasons=enriched_reasons,
+                        reasons=list(pause_reasons),
                         outputs=event.outputs,
                         paused_nodes=paused_nodes,
                     )
@@ -699,6 +690,7 @@ class WorkflowBasedAppRunner:
                 self._publish_event(
                     QueueNodeStartedEvent(
                         node_execution_id=event.id,
+                        node_run_index=node_run_index,
                         node_id=event.node_id,
                         node_title=event.node_title,
                         node_type=event.node_type,
@@ -843,7 +835,7 @@ class WorkflowBasedAppRunner:
                         start_at=event.start_at,
                         node_run_index=workflow_entry.graph_engine.runtime_state.node_run_steps,
                         inputs=event.inputs,
-                        metadata={**event.metadata, **node_metadata},
+                        metadata=_merge_container_metadata(event.metadata, node_metadata),
                     )
                 )
             case NodeRunIterationNextEvent():
@@ -869,7 +861,7 @@ class WorkflowBasedAppRunner:
                         node_run_index=workflow_entry.graph_engine.runtime_state.node_run_steps,
                         inputs=event.inputs,
                         outputs=event.outputs,
-                        metadata={**event.metadata, **node_metadata},
+                        metadata=_merge_container_metadata(event.metadata, node_metadata),
                         steps=event.steps,
                         error=event.error if isinstance(event, NodeRunIterationFailedEvent) else None,
                     )
@@ -884,7 +876,7 @@ class WorkflowBasedAppRunner:
                         start_at=event.start_at,
                         node_run_index=workflow_entry.graph_engine.runtime_state.node_run_steps,
                         inputs=event.inputs,
-                        metadata={**event.metadata, **node_metadata},
+                        metadata=_merge_container_metadata(event.metadata, node_metadata),
                     )
                 )
             case NodeRunLoopNextEvent():
@@ -910,7 +902,7 @@ class WorkflowBasedAppRunner:
                         node_run_index=workflow_entry.graph_engine.runtime_state.node_run_steps,
                         inputs=event.inputs,
                         outputs=event.outputs,
-                        metadata={**event.metadata, **node_metadata},
+                        metadata=_merge_container_metadata(event.metadata, node_metadata),
                         steps=event.steps,
                         error=event.error if isinstance(event, NodeRunLoopFailedEvent) else None,
                     )

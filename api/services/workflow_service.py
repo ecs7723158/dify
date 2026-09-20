@@ -144,6 +144,7 @@ HumanInputNode = _DebugHumanInputNode
 from services.human_input_service import HumanInputService
 from services.workflow.workflow_converter import WorkflowConverter
 from services.workflow_ref_service import WorkflowRef
+from services.workflow_run_agg import WorkflowRunAgg
 from services.workflow_version_number_service import allocate_version_number
 
 from .errors.workflow_service import DraftWorkflowDeletionError, WorkflowInUseError
@@ -1212,6 +1213,7 @@ class WorkflowService:
             enclosing_node_id = None
 
         run = WorkflowEntry.single_step_run(
+            execution_driver=WorkflowRunAgg.run,
             workflow=draft_workflow,
             node_id=node_id,
             user_inputs=user_inputs,

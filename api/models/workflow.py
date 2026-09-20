@@ -38,6 +38,7 @@ from core.workflow.variable_prefixes import (
     CONVERSATION_VARIABLE_NODE_ID,
     SYSTEM_VARIABLE_NODE_ID,
 )
+from enums import WorkflowKind
 from extensions.ext_storage import Storage
 from factories.variable_factory import TypeMismatchError, build_segment_with_type
 from graphon.entities.graph_config import NodeConfigDict, NodeConfigDictAdapter
@@ -149,18 +150,6 @@ class WorkflowType(StrEnum):
 
         app_mode = app_mode if isinstance(app_mode, AppMode) else AppMode.value_of(app_mode)
         return cls.WORKFLOW if app_mode == AppMode.WORKFLOW else cls.CHAT
-
-
-class WorkflowKind(StrEnum):
-    STANDARD = "standard"
-    SNIPPET = "snippet"
-
-    @classmethod
-    def value_of(cls, value: str) -> "WorkflowKind":
-        for kind in cls:
-            if kind.value == value:
-                return kind
-        raise ValueError(f"invalid workflow kind value {value}")
 
 
 def resolve_workflow_kind(kind: str | WorkflowKind | None) -> WorkflowKind:

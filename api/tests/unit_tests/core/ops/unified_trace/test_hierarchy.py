@@ -7,6 +7,8 @@ from core.workflow.node_execution_process_data import (
     WORKFLOW_TOOL_INVOCATION_ID_KEY,
     WORKFLOW_TOOL_PARENT_EXECUTION_ID_KEY,
 )
+from graphon.entities import WorkflowNodeExecution
+from graphon.enums import BuiltinNodeTypes
 
 
 def execution(**overrides: object) -> WorkflowExecutionLike:
@@ -166,3 +168,32 @@ def test_tool_parent_references_cannot_escape_the_loaded_trace_or_create_cycles(
     ]
 
     assert workflow_tool_parent_ids(nodes) == {}
+
+
+def test_parent_ambiguity_is_isolated_to_its_workflow_and_tool_invocation() -> None:
+    nodes: list[WorkflowNodeExecution] = []
+    expected_parents: dict[str, str] = {}
+    for workflow_id in ("source-a", "source-b"):
+        for invocation_id in ("first", "second"):
+            prefix = f"{workflow_id}-{invocation_id}"
+            for index, node_id in enumerate(("start", "end")):
+                nodes.append(
+                    WorkflowNodeExecution(
+                        id=f"{prefix}-{node_id}",
+                        workflow_id=workflow_id,
+                        node_id=node_id,
+                        node_type=BuiltinNodeTypes.START if node_id == "start" else BuiltinNodeTypes.END,
+                        title=node_id,
+                        index=index,
+                        predecessor_node_id="start" if node_id == "end" else None,
+                        process_data={WORKFLOW_TOOL_INVOCATION_ID_KEY: invocation_id},
+                        created_at=datetime(2025, 1, 1),
+                    )
+                )
+            expected_parents[f"{prefix}-end"] = f"{prefix}-start"
+
+    nodes.append(nodes[0].model_copy(update={"id": "repeated-start"}))
+    del expected_parents["source-a-first-end"]
+
+    assert build_workflow_hierarchy(nodes).parent_by_execution_id == expected_parents
+    assert build_workflow_hierarchy(list(reversed(nodes))).parent_by_execution_id == expected_parents

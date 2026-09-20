@@ -366,6 +366,7 @@ class TestDifyNodeFactoryInit:
     def test_from_graph_init_context_translates_before_init(self):
         graph_init_context = MagicMock()
         graph_init_context.to_graph_init_params.return_value = sentinel.init_params
+        graph_init_context.execution_driver = None
 
         with patch.object(node_factory.DifyNodeFactory, "__init__", return_value=None) as init:
             factory = node_factory.DifyNodeFactory.from_graph_init_context(
@@ -380,6 +381,7 @@ class TestDifyNodeFactoryInit:
             runtime_state=sentinel.runtime_state,
             human_input_run_context=None,
             use_workflow_tool_containers=True,
+            execution_driver=None,
         )
 
     def test_with_runtime_state_creates_factory_with_new_state(self):
@@ -387,6 +389,7 @@ class TestDifyNodeFactoryInit:
         factory.init_params = sentinel.init_params
         factory._human_input_run_context = None
         factory._use_workflow_tool_containers = True
+        factory._execution_driver = None
 
         with patch.object(node_factory, "DifyNodeFactory", return_value=sentinel.factory) as factory_cls:
             new_factory = factory.with_runtime_state(sentinel.runtime_state)
@@ -397,6 +400,7 @@ class TestDifyNodeFactoryInit:
             runtime_state=sentinel.runtime_state,
             human_input_run_context=None,
             use_workflow_tool_containers=True,
+            execution_driver=None,
         )
 
     def test_with_graph_config_copies_factory_and_init_params(self):
@@ -405,6 +409,7 @@ class TestDifyNodeFactoryInit:
         factory.init_params.model_copy.return_value = sentinel.copied_init_params
         factory._human_input_run_context = sentinel.human_input_run_context
         factory._use_workflow_tool_containers = True
+        factory._execution_driver = None
         graph_config = {"nodes": [], "edges": []}
 
         copied_factory = factory.with_graph_config(graph_config)
@@ -563,6 +568,7 @@ class TestDifyNodeFactoryCreateNode:
             created_by=None,
         )
         factory._use_workflow_tool_containers = True
+        factory._execution_driver = None
         factory._code_executor = sentinel.code_executor
         factory._code_limits = sentinel.code_limits
         factory._jinja2_template_renderer = sentinel.jinja2_template_renderer

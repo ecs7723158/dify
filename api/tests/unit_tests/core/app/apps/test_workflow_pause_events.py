@@ -146,13 +146,9 @@ def test_graph_run_paused_event_uses_projected_nodes_for_highlighting(
         node_id="node-human",
         node_title="Human Step",
     )
-    monkeypatch.setattr(
-        "core.app.apps.workflow_app_runner.enrich_graph_pause_reasons",
-        lambda **_: [enriched_reason],
-    )
     monkeypatch.setattr("core.app.apps.workflow_app_runner.dispatch_human_input_email_task", MagicMock())
 
-    runner._handle_event(workflow_entry, event)
+    runner.handle_event(workflow_entry, event, pause_reasons=[enriched_reason])
 
     assert len(runner.published_events) == 1
     queue_event = runner.published_events[0]

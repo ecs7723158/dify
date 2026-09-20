@@ -33,6 +33,13 @@ def _read_attribute(value: object, name: str, default: Any = None) -> Any:
 
 
 @dataclass(frozen=True)
+class NodeLookupKey:
+    workflow_id: str
+    invocation_id: str
+    node_id: str
+
+
+@dataclass(frozen=True)
 class WrapperKey:
     kind: Literal["iteration", "loop"]
     container_execution_id: str
@@ -72,13 +79,13 @@ def execution_metadata(execution: object) -> Mapping[str, Any]:
     return {str(key): item for key, item in value.items()}
 
 
-def _node_lookup_key(execution: WorkflowExecutionLike, node_id: str) -> tuple[str, str, str]:
+def _node_lookup_key(execution: WorkflowExecutionLike, node_id: str) -> NodeLookupKey:
     process_data = _read_attribute(execution, "process_data") or {}
     invocation_id = process_data.get(WORKFLOW_TOOL_INVOCATION_ID_KEY)
-    return (
-        _read_attribute(execution, "workflow_id", ""),
-        invocation_id if isinstance(invocation_id, str) else "",
-        node_id,
+    return NodeLookupKey(
+        workflow_id=_read_attribute(execution, "workflow_id", ""),
+        invocation_id=invocation_id if isinstance(invocation_id, str) else "",
+        node_id=node_id,
     )
 
 
@@ -104,9 +111,9 @@ def workflow_tool_parent_ids(
     return parents
 
 
-def _unique_execution_by_node_id(executions: Sequence[WorkflowExecutionLike]) -> dict[tuple[str, str, str], str]:
-    result: dict[tuple[str, str, str], str] = {}
-    repeated_node_keys: set[tuple[str, str, str]] = set()
+def _unique_execution_by_node_id(executions: Sequence[WorkflowExecutionLike]) -> dict[NodeLookupKey, str]:
+    result: dict[NodeLookupKey, str] = {}
+    repeated_node_keys: set[NodeLookupKey] = set()
     for item in executions:
         node_id = item.node_id
         if not isinstance(node_id, str):

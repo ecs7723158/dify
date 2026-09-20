@@ -1,13 +1,13 @@
 import logging
 import time
-from typing import cast
+from typing import cast, override
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from core.app.apps.base_app_queue_manager import AppQueueManager
 from core.app.apps.pipeline.pipeline_config_manager import PipelineConfig
-from core.app.apps.workflow_app_runner import WorkflowBasedAppRunner
+from core.app.apps.workflow_app_runner import PreparedWorkflowRun, WorkflowBasedAppRunner, WorkflowRunDriver
 from core.app.entities.app_invoke_entities import (
     InvokeFrom,
     RagPipelineGenerateEntity,
@@ -53,6 +53,7 @@ class PipelineRunner(WorkflowBasedAppRunner):
         workflow_node_execution_repository: WorkflowNodeExecutionRepository,
         workflow_tool_source_repository: WorkflowToolSourceRepository,
         workflow_thread_pool_id: str | None = None,
+        execution_driver: WorkflowRunDriver | None = None,
     ) -> None:
         """
         :param application_generate_entity: application generate entity
@@ -61,6 +62,7 @@ class PipelineRunner(WorkflowBasedAppRunner):
         """
         super().__init__(
             queue_manager=queue_manager,
+            execution_driver=execution_driver,
             variable_loader=variable_loader,
             app_id=application_generate_entity.app_config.app_id,
         )
@@ -75,10 +77,9 @@ class PipelineRunner(WorkflowBasedAppRunner):
     def _get_app_id(self) -> str:
         return self.application_generate_entity.app_config.app_id
 
-    def run(self) -> None:
-        """
-        Run application
-        """
+    @override
+    def prepare(self) -> PreparedWorkflowRun:
+        """Prepare graph execution and its persistence dependencies."""
         app_config = self.application_generate_entity.app_config
         app_config = cast(PipelineConfig, app_config)
         invoke_from = self.application_generate_entity.invoke_from
@@ -241,9 +242,19 @@ class PipelineRunner(WorkflowBasedAppRunner):
 
         workflow_entry.graph_engine.add_layer(persistence_layer)
 
-        for event in self._run_workflow(workflow_entry):
-            self._update_document_status(event, document_ref)
-            self._handle_event(workflow_entry, event)
+        self._document_ref = document_ref
+        return PreparedWorkflowRun(
+            entry=workflow_entry,
+            persistence_layer=persistence_layer,
+            generate_entity=self.application_generate_entity,
+            workflow_execution_repository=self._workflow_execution_repository,
+            workflow_node_execution_repository=self._workflow_node_execution_repository,
+        )
+
+    @override
+    def handle_event(self, workflow_entry: WorkflowEntry, event: EngineEvent, **kwargs) -> None:
+        self._update_document_status(event, self._document_ref)
+        super().handle_event(workflow_entry, event, **kwargs)
 
     def get_workflow(self, session: Session, pipeline: Pipeline, workflow_id: str) -> Workflow | None:
         """
@@ -311,6 +322,7 @@ class PipelineRunner(WorkflowBasedAppRunner):
             app_type=CreditUsageAppType.RAG_PIPELINE,
         )
         graph_init_context = DifyGraphInitContext(
+            execution_driver=self._execution_driver,
             workflow_id=workflow.id,
             graph_config=graph_config,
             run_context=run_context,

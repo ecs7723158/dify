@@ -78,6 +78,7 @@ from graphon.variables.segments import ArrayObjectSegment, ObjectSegment
 from models.model import Conversation
 
 if TYPE_CHECKING:
+    from core.app.apps.workflow_app_runner import WorkflowRunDriver
     from graphon.runtime import InitParams, RuntimeState
 
 LATEST_VERSION = "latest"
@@ -99,6 +100,7 @@ class DifyGraphInitContext:
     graph_config: Mapping[str, Any]
     run_context: Mapping[str, Any]
     call_depth: int
+    execution_driver: "WorkflowRunDriver | None" = None
 
     def to_graph_init_params(self) -> "InitParams":
         from graphon.runtime import InitParams
@@ -321,6 +323,7 @@ class DifyNodeFactory(NodeFactory):
             runtime_state=runtime_state,
             human_input_run_context=human_input_run_context,
             use_workflow_tool_containers=use_workflow_tool_containers,
+            execution_driver=graph_init_context.execution_driver,
         )
 
     def __init__(
@@ -329,11 +332,13 @@ class DifyNodeFactory(NodeFactory):
         runtime_state: "RuntimeState",
         human_input_run_context: Mapping[str, Any] | DifyRunContext | None = None,
         use_workflow_tool_containers: bool = True,
+        execution_driver: "WorkflowRunDriver | None" = None,
     ) -> None:
         self.init_params = init_params
         self.runtime_state = runtime_state
         self._dify_context = self._resolve_dify_context(init_params.run_context)
         self._use_workflow_tool_containers = use_workflow_tool_containers
+        self._execution_driver = execution_driver
         self._human_input_run_context = (
             self._dify_context
             if human_input_run_context is None
@@ -380,7 +385,7 @@ class DifyNodeFactory(NodeFactory):
             ),
             conversation_id_getter=self._conversation_id,
         )
-        self._tool_runtime = DifyToolNodeRuntime(self._dify_context)
+        self._tool_runtime = DifyToolNodeRuntime(self._dify_context, execution_driver=execution_driver)
         self._http_request_file_manager = file_manager
         self._document_extractor_unstructured_api_config = UnstructuredApiConfig(
             api_url=dify_config.UNSTRUCTURED_API_URL,
@@ -409,6 +414,7 @@ class DifyNodeFactory(NodeFactory):
             runtime_state=runtime_state,
             human_input_run_context=self._human_input_run_context,
             use_workflow_tool_containers=self._use_workflow_tool_containers,
+            execution_driver=self._execution_driver,
         )
 
     @override
@@ -416,6 +422,10 @@ class DifyNodeFactory(NodeFactory):
         factory = copy(self)
         factory.init_params = self.init_params.model_copy(update={"graph_config": graph_config})
         return factory
+
+    @property
+    def execution_driver(self) -> "WorkflowRunDriver | None":
+        return self._execution_driver
 
     @property
     def human_input_run_context(self) -> DifyRunContext:

@@ -119,3 +119,36 @@ def test_get_source_rejects_unavailable_source(
         )
         is None
     )
+
+
+@pytest.mark.parametrize("stored_kind", [None, "standard", "snippet"])
+def test_get_source_returns_workflow_kind_enum(
+    sqlite_session_factory: sessionmaker[Session], stored_kind: str | None
+) -> None:
+    _save_source(sqlite_session_factory)
+    with sqlite_session_factory.begin() as session:
+        workflow = session.get(Workflow, _PUBLISHED_WORKFLOW_ID)
+        assert workflow is not None
+        workflow.kind = None if stored_kind is None else WorkflowKind.value_of(stored_kind)
+
+    source = SQLAlchemyWorkflowToolSourceRepository(sqlite_session_factory).get_source(
+        tenant_id=_TENANT_ID,
+        app_id=_APP_ID,
+        workflow_id=_PUBLISHED_WORKFLOW_ID,
+        version=_PUBLISHED_VERSION,
+    )
+
+    assert source is not None
+    assert source.workflow_kind is WorkflowKind.value_of(stored_kind or "standard")
+    assert json.dumps(source.workflow_kind) == json.dumps(stored_kind or "standard")
+
+
+def test_workflow_kind_legacy_imports_preserve_enum_identity_and_conversion() -> None:
+    from enums import WorkflowKind as SharedWorkflowKind
+    from models import WorkflowKind as ExportedWorkflowKind
+
+    assert WorkflowKind is ExportedWorkflowKind is SharedWorkflowKind
+    assert SharedWorkflowKind.value_of("standard") is SharedWorkflowKind.STANDARD
+    assert SharedWorkflowKind.value_of("snippet") is SharedWorkflowKind.SNIPPET
+    with pytest.raises(ValueError, match="invalid workflow kind value unsupported"):
+        SharedWorkflowKind.value_of("unsupported")
