@@ -62,9 +62,7 @@ def _message(*, status: MessageStatus, answer: str = "") -> Message:
     )
 
 
-def test_persist_human_input_extra_content_adds_record(
-    sqlite_session: Session
-) -> None:
+def test_persist_human_input_extra_content_adds_record(sqlite_session: Session) -> None:
     pipeline = _build_pipeline()
 
     pipeline._persist_human_input_extra_content(form_id="form-1")
@@ -76,9 +74,7 @@ def test_persist_human_input_extra_content_adds_record(
     assert content.form_id == "form-1"
 
 
-def test_persist_human_input_extra_content_skips_when_existing(
-    sqlite_session: Session
-) -> None:
+def test_persist_human_input_extra_content_skips_when_existing(sqlite_session: Session) -> None:
     pipeline = _build_pipeline()
     existing = HumanInputContent.new(workflow_run_id="run-1", message_id="message-1", form_id="form-1")
     sqlite_session.add(existing)

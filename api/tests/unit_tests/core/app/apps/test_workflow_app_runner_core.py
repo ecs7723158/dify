@@ -300,7 +300,8 @@ class TestWorkflowBasedAppRunner:
         self, monkeypatch: pytest.MonkeyPatch
     ):
         runner = WorkflowBasedAppRunner(queue_manager=SimpleNamespace(), app_id="app")
-        graph_runtime_state = GraphRuntimeState(
+        graph_runtime_state = RuntimeState(
+            workflow_id="workflow",
             variable_pool=VariablePool.from_bootstrap(system_variables=default_system_variables()),
             start_at=0.0,
         )
@@ -348,7 +349,6 @@ class TestWorkflowBasedAppRunner:
             node_id="node-1",
             user_inputs=user_inputs,
             graph_runtime_state=graph_runtime_state,
-            node_type_filter_key="iteration_id",
             node_type_label="iteration",
             user_id="00000000-0000-0000-0000-000000000001",
         )

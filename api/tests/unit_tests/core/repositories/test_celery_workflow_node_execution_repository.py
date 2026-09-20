@@ -67,12 +67,12 @@ class TestCeleryWorkflowNodeExecutionRepository:
     """Test cases for CeleryWorkflowNodeExecutionRepository."""
 
     def test_trace_read_keeps_source_nodes_out_of_runtime_cache(
-        self, sqlite_session_factory, mock_end_user, sample_workflow_node_execution
+        self, sqlite_session_factory, end_user, sample_workflow_node_execution
     ):
         caller = CeleryWorkflowNodeExecutionRepository(
             session_factory=sqlite_session_factory,
             tenant_id=RESOURCE_TENANT_ID,
-            user=mock_end_user,
+            user=end_user,
             app_id="caller-app",
             triggered_from=WorkflowNodeExecutionTriggeredFrom.WORKFLOW_RUN,
         )
