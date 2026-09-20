@@ -46,7 +46,7 @@ def preserve_flask_contexts(
     """
     with use_contextvars(context_vars):
         # Read the captured user before creating a fresh Flask app context.
-        saved_user = getattr(g, "_login_user", None)
+        saved_user = g.get("_login_user")
         with flask_app.app_context():
             if saved_user is not None:
                 g._login_user = saved_user

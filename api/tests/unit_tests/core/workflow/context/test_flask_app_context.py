@@ -295,14 +295,15 @@ class TestFlaskExecutionContextIntegration:
         captured = contextvars.Context()
         captured.run(test_var.set, "captured")
         ctx = FlaskExecutionContext(flask_app=mock_flask_app, context_vars=captured)
-        failing_method = "__enter__" if failure_stage == "enter" else "__exit__"
-        getattr(mock_flask_app.app_context.return_value, failing_method).side_effect = ValueError("context failed")
+        app_context = mock_flask_app.app_context.return_value
+        failing_method = app_context.__enter__ if failure_stage == "enter" else app_context.__exit__
+        failing_method.side_effect = ValueError("context failed")
 
         with pytest.raises(ValueError, match="context failed"), ctx.enter() if use_enter else ctx:
             assert test_var.get() == "captured"
 
         assert test_var not in contextvars.copy_context()
-        getattr(mock_flask_app.app_context.return_value, failing_method).side_effect = None
+        failing_method.side_effect = None
         with ctx:
             assert test_var.get() == "captured"
         assert test_var not in contextvars.copy_context()
